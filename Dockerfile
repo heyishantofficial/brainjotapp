@@ -15,6 +15,9 @@ RUN cd backend && npm ci
 
 COPY backend/ ./backend/
 
+# Copy built frontend into backend/public so the path is unambiguous
+RUN cp -r /app/frontend/dist /app/backend/public
+
 EXPOSE 3001
 
 CMD ["node", "backend/server.js"]
