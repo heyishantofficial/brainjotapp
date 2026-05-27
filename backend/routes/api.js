@@ -7,11 +7,51 @@ const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const multerS3 = require('multer-s3');
+const { Resend } = require('resend');
 const Project = require('../models/Project');
 const Space = require('../models/Space');
 const User = require('../models/User');
 
 const router = express.Router();
+
+const APP_URL = process.env.APP_URL || 'https://brainjotapp.up.railway.app';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'BrainJot <onboarding@resend.dev>';
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTitle }) {
+  if (!resend) return;
+  const subjectTarget = projectTitle ? `project "${projectTitle}"` : `space "${spaceTitle}"`;
+  const displayTarget = projectTitle || spaceTitle;
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to,
+      subject: `${inviterName} invited you to collaborate on BrainJot`,
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0a0a0a;color:#f5f5f5;border-radius:16px">
+          <h1 style="font-size:28px;font-weight:800;margin:0 0 8px">🧠 BrainJot</h1>
+          <p style="color:#888;font-size:14px;margin:0 0 32px">Your brain at a glance</p>
+
+          <p style="font-size:16px;line-height:1.6;margin:0 0 24px">
+            Hey${toName ? ` ${toName}` : ''},<br><br>
+            <strong>${inviterName}</strong> has invited you to collaborate on the ${subjectTarget}.
+          </p>
+
+          <a href="${APP_URL}" style="display:inline-block;background:#7C6FCD;color:#fff;text-decoration:none;padding:14px 28px;border-radius:12px;font-weight:700;font-size:15px">
+            Open ${displayTarget} in BrainJot →
+          </a>
+
+          <p style="font-size:13px;color:#666;margin:32px 0 0;line-height:1.6">
+            If you don't have a BrainJot account yet, click the link above to sign up for free.<br>
+            Once logged in, ask ${inviterName} to re-invite you so the collaboration is linked to your account.
+          </p>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error('Email send failed:', err.message);
+  }
+}
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 const SALT_ROUNDS = 12;
@@ -401,6 +441,8 @@ router.post('/', async (req, res, next) => {
     const collab = { id: 'collab_' + uid(), name: name.trim() || email.replace(/@.*/, ''), email: email.trim(), status: 'invited' };
     proj.collaborators.push(collab);
     await proj.save();
+    const inviter = await User.findOne({ id: userId }).select('name -_id');
+    sendInviteEmail({ to: email.trim(), toName: name.trim(), inviterName: inviter?.name || 'Someone', projectTitle: proj.title });
     res.json({ ok: true, collaborator: collab });
     return;
   }
@@ -661,6 +703,8 @@ router.post('/', async (req, res, next) => {
     if (exists) { res.status(400).json({ error: 'Collaborator already exists' }); return; }
     space.collaborators.push({ id: crypto.randomUUID(), name: (name.trim() || email.replace(/@.*/, '')), email: email.trim(), role });
     await space.save();
+    const inviter = await User.findOne({ id: userId }).select('name -_id');
+    sendInviteEmail({ to: email.trim(), toName: name.trim(), inviterName: inviter?.name || 'Someone', spaceTitle: space.title });
     res.json({ ok: true });
     return;
   }
