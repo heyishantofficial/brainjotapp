@@ -1,0 +1,59 @@
+const mongoose = require('mongoose');
+
+const fileSchema = new mongoose.Schema({
+  id: String,
+  name: String,
+  file: String,
+  url: String,
+  type: String,
+  size: Number,
+  uploaded: String,
+}, { _id: false });
+
+const collaboratorSchema = new mongoose.Schema({
+  id: String,
+  name: String,
+  email: String,
+  status: String,
+}, { _id: false });
+
+const taskSchema = new mongoose.Schema({
+  id: String,
+  text: String,
+  done: Boolean,
+  badge: { type: String, default: 'Custom' },
+  notes: { type: String, default: '' },
+  richNotes: { type: String, default: '' },
+  files: [fileSchema],
+  deadline: { type: String, default: '' },
+  assignee: { type: String, default: '' }, // kept for backward compatibility
+  assignees: [String],
+  priority: { type: String, default: '' },
+  comments: [{
+    id: String,
+    author: String,
+    text: String,
+    time: String
+  }],
+  createdAt: { type: Date, default: Date.now },
+  finishedAt: { type: Date, default: null },
+}, { _id: false });
+
+const projectSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  title: { type: String, required: true },
+  subtitle: { type: String, default: '' },
+  color: { type: String, default: '#888785' },
+  tag: { type: String, default: 'Project' },
+  tasks: [taskSchema],
+  notes: { type: String, default: '' },
+  richNotes: { type: String, default: '' },
+  files: [fileSchema],
+  collaborators: [collaboratorSchema],
+  archived: { type: Boolean, default: false },
+  spaceId: { type: String, default: '' },
+  ownerId: { type: String, index: true },
+  __orderRank: { type: Number, default: 0 },
+});
+
+module.exports = mongoose.model('Project', projectSchema);

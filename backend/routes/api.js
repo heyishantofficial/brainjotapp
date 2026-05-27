@@ -1,0 +1,709 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const multerS3 = require('multer-s3');
+const Project = require('../models/Project');
+const Space = require('../models/Space');
+const User = require('../models/User');
+
+const router = express.Router();
+
+const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
+const SALT_ROUNDS = 12;
+
+// ── R2 / S3 storage setup ─────────────────────────────────────────
+const useR2 = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
+
+const s3 = useR2 ? new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+}) : null;
+
+async function deleteStoredFile(fileRecord) {
+  if (useR2) {
+    try {
+      await s3.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: fileRecord.file }));
+    } catch (_) { /* ignore missing files */ }
+  } else {
+    const fp = path.join(UPLOADS_DIR, fileRecord.file);
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  }
+}
+
+function filePublicUrl(key) {
+  return useR2
+    ? `${process.env.R2_PUBLIC_URL}/${key}`
+    : `uploads/${key}`;
+}
+
+// ── Multer setup ──────────────────────────────────────────────────
+const ALLOWED_EXT = new Set([
+  'jpg','jpeg','png','gif','webp','pdf',
+  'doc','docx','xls','xlsx','ppt','pptx',
+  'mp4','mov','zip','txt','csv',
+]);
+
+function makeKey(req, file) {
+  const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+  const tid = req.body.taskId;
+  const pid = req.body.projectId;
+  const prefix = tid ? `task_${tid}_` : `${pid}_`;
+  return `${prefix}${crypto.randomUUID()}.${ext}`;
+}
+
+const storage = useR2
+  ? multerS3({
+      s3,
+      bucket: process.env.R2_BUCKET_NAME,
+      key: (req, file, cb) => cb(null, makeKey(req, file)),
+    })
+  : multer.diskStorage({
+      destination(_req, _file, cb) {
+        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        cb(null, UPLOADS_DIR);
+      },
+      filename: (req, file, cb) => cb(null, makeKey(req, file)),
+    });
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+    if (ALLOWED_EXT.has(ext)) cb(null, true);
+    else cb(new Error('File type not allowed'));
+  },
+});
+
+function conditionalUpload(req, res, next) {
+  const action = req.query.action;
+  if (action === 'upload' || action === 'upload_task_file') {
+    upload.single('file')(req, res, next);
+  } else {
+    next();
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function uid() {
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 13);
+}
+
+function now() {
+  return new Date().toISOString().slice(0, 16).replace('T', ' ');
+}
+
+function toPlain(docs) {
+  return docs.map(doc => {
+    const obj = doc.toObject ? doc.toObject() : doc;
+    const { _id, __v, ...rest } = obj;
+    return rest;
+  });
+}
+
+function cloneTaskForDuplicate(task) {
+  const { _id, id, ...rest } = task.toObject ? task.toObject() : task;
+  return { ...rest, id: 'task_' + uid(), files: [] };
+}
+
+// ── Seed default data per user ────────────────────────────────────
+async function seedDefaultData(userId) {
+  const spaceCount = await Space.countDocuments({ ownerId: userId });
+  let defaultSpaceId;
+
+  if (spaceCount === 0) {
+    const workId = 'space_' + uid();
+    const personalId = 'space_' + uid();
+    await Space.create({ id: workId,     title: 'Work',     icon: '💼', color: '#3b82f6', description: 'Professional projects',   ownerId: userId, __orderRank: 0 });
+    await Space.create({ id: personalId, title: 'Personal', icon: '🏠', color: '#10b981', description: 'Personal goals & projects', ownerId: userId, __orderRank: 1 });
+    defaultSpaceId = workId;
+  } else {
+    const first = await Space.findOne({ ownerId: userId }).sort({ __orderRank: 1 });
+    defaultSpaceId = first.id;
+  }
+
+  const projectCount = await Project.countDocuments({ ownerId: userId });
+  if (projectCount > 0) return;
+
+  const defaults = [
+    {
+      id: 'proj_' + uid(), title: 'My First Project', subtitle: 'Get started with BrainJot',
+      color: '#7C6FCD', tag: 'Project',
+      tasks: [
+        { id: 'task_' + uid(), text: 'Create your first task', badge: 'Getting Started' },
+        { id: 'task_' + uid(), text: 'Add a deadline to a task', badge: 'Getting Started' },
+        { id: 'task_' + uid(), text: 'Explore Spaces in the sidebar', badge: 'Getting Started' },
+      ],
+    },
+  ];
+
+  for (let i = 0; i < defaults.length; i++) {
+    const d = defaults[i];
+    await Project.create({
+      ...d,
+      spaceId: defaultSpaceId,
+      ownerId: userId,
+      notes: '',
+      richNotes: '',
+      files: [],
+      collaborators: [],
+      __orderRank: i,
+      tasks: d.tasks.map(t => ({
+        ...t,
+        done: false,
+        notes: '',
+        richNotes: '',
+        files: [],
+        deadline: '',
+        assignee: '',
+        priority: '',
+      })),
+    });
+  }
+}
+
+// ── Rate limiters ─────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ── Auth middleware ───────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// ── Download helper ───────────────────────────────────────────────
+router.get('/download', requireAuth, (req, res) => {
+  const fileUrl = req.query.url;
+  const originalName = req.query.name;
+
+  if (!fileUrl) return res.status(400).send('File URL is required');
+
+  // R2 files have a full HTTPS public URL — redirect directly
+  if (fileUrl.startsWith('https://')) {
+    return res.redirect(fileUrl);
+  }
+
+  // Local dev: serve from disk
+  const filename = path.basename(fileUrl);
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (!filePath.startsWith(UPLOADS_DIR + path.sep)) {
+    return res.status(400).send('Invalid file path');
+  }
+  if (fs.existsSync(filePath)) {
+    res.download(filePath, originalName || filename);
+  } else {
+    res.status(404).send('File not found');
+  }
+});
+
+router.use(conditionalUpload);
+
+// ── GET routes ────────────────────────────────────────────────────
+router.get('/', async (req, res) => {
+  const action = req.query.action;
+
+  if (action === 'check') {
+    if (req.session.userId) {
+      const user = await User.findOne({ id: req.session.userId }).select('name email -_id');
+      res.json({ loggedIn: true, user: user ? { name: user.name, email: user.email } : null });
+    } else {
+      res.json({ loggedIn: false });
+    }
+    return;
+  }
+
+  if (!req.session.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const userId = req.session.userId;
+
+  if (action === 'get') {
+    const spaces   = await Space.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
+    const projects = await Project.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
+    res.json({ spaces: toPlain(spaces), projects: toPlain(projects) });
+    return;
+  }
+
+  res.status(404).json({ error: 'Unknown action' });
+});
+
+// ── POST routes ───────────────────────────────────────────────────
+router.post('/', async (req, res, next) => {
+  const action = req.query.action;
+
+  // ── register ──
+  if (action === 'register') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email, password, name } = req.body;
+        if (!email?.trim() || !password || !name?.trim()) {
+          return res.status(400).json({ error: 'Name, email and password are required' });
+        }
+        if (password.length < 8) {
+          return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        const existing = await User.findOne({ email: email.toLowerCase().trim() });
+        if (existing) {
+          return res.status(409).json({ error: 'An account with this email already exists' });
+        }
+        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+        const userId = 'user_' + uid();
+        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), passwordHash });
+        await seedDefaultData(userId);
+        req.session.userId = userId;
+        res.json({ ok: true, user: { name: user.name, email: user.email } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── login ──
+  if (action === 'login') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email, password } = req.body;
+        if (!email?.trim() || !password) {
+          return res.status(400).json({ error: 'Email and password are required' });
+        }
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (!user) {
+          return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        const match = await bcrypt.compare(password, user.passwordHash);
+        if (!match) {
+          return res.status(401).json({ error: 'Invalid email or password' });
+        }
+        req.session.userId = user.id;
+        res.json({ ok: true, user: { name: user.name, email: user.email } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── logout ──
+  if (action === 'logout') {
+    req.session.destroy(() => res.json({ ok: true }));
+    return;
+  }
+
+  if (!req.session.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const userId = req.session.userId;
+
+  // ── add_project ──
+  if (action === 'add_project') {
+    const { title, subtitle = '', color = '#888785', tag = 'Project', spaceId = '' } = req.body;
+    if (!title?.trim()) { res.status(400).json({ error: 'Title required' }); return; }
+    const newId = 'proj_' + uid();
+    const count = await Project.countDocuments({ spaceId, ownerId: userId });
+    await Project.create({ id: newId, title: title.trim(), subtitle, color, tag, spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: [], __orderRank: count });
+    res.json({ ok: true, id: newId });
+    return;
+  }
+
+  // ── rename_project ──
+  if (action === 'rename_project') {
+    const { projectId, title, subtitle, tag, color } = req.body;
+    if (!projectId || !title?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    const update = { title: title.trim() };
+    if (subtitle !== undefined) update.subtitle = subtitle.trim();
+    if (tag !== undefined) update.tag = tag.trim() || 'Project';
+    if (color !== undefined) update.color = color;
+    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: update });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── duplicate_project ──
+  if (action === 'duplicate_project') {
+    const { projectId } = req.body;
+    const source = await Project.findOne({ id: projectId, ownerId: userId }).lean();
+    if (!source) { res.status(404).json({ error: 'Project not found' }); return; }
+    const dupId = 'proj_' + uid();
+    const { _id, __v, id, ...rest } = source;
+    await Project.create({
+      ...rest,
+      id: dupId,
+      title: (rest.title || 'Project') + ' Copy',
+      ownerId: userId,
+      files: [],
+      tasks: (rest.tasks || []).map(cloneTaskForDuplicate),
+    });
+    res.json({ ok: true, id: dupId });
+    return;
+  }
+
+  // ── delete_project ──
+  if (action === 'delete_project') {
+    const { projectId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId }).lean();
+    if (proj) {
+      for (const f of proj.files || []) await deleteStoredFile(f);
+      for (const t of proj.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
+    }
+    await Project.deleteOne({ id: projectId, ownerId: userId });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── archive_project ──
+  if (action === 'archive_project') {
+    const { projectId } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { archived: true } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── unarchive_project ──
+  if (action === 'unarchive_project') {
+    const { projectId } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { archived: false } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── clear_project_tasks ──
+  if (action === 'clear_project_tasks') {
+    const { projectId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    for (const t of proj.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
+    proj.tasks = [];
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── invite_collaborator ──
+  if (action === 'invite_collaborator') {
+    const { projectId, name = '', email } = req.body;
+    if (!projectId || !email?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const exists = proj.collaborators.some(c => c.email.toLowerCase() === email.toLowerCase());
+    if (exists) { res.status(400).json({ error: 'Collaborator already exists' }); return; }
+    const collab = { id: 'collab_' + uid(), name: name.trim() || email.replace(/@.*/, ''), email: email.trim(), status: 'invited' };
+    proj.collaborators.push(collab);
+    await proj.save();
+    res.json({ ok: true, collaborator: collab });
+    return;
+  }
+
+  // ── remove_collaborator ──
+  if (action === 'remove_collaborator') {
+    const { projectId, collaboratorId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    proj.collaborators = proj.collaborators.filter(c => c.id !== collaboratorId);
+    proj.tasks.forEach(t => {
+      if (t.assignee === collaboratorId) t.assignee = '';
+      if (Array.isArray(t.assignees)) t.assignees = t.assignees.filter(a => a !== collaboratorId);
+    });
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── task_toggle ──
+  if (action === 'task_toggle') {
+    const { projectId, taskId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const task = proj.tasks.find(t => t.id === taskId);
+    if (task) { task.done = !task.done; task.finishedAt = task.done ? new Date() : null; }
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── add_task ──
+  if (action === 'add_task') {
+    const { projectId, text } = req.body;
+    if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const newId = 'task_' + uid();
+    proj.tasks.push({ id: newId, text: text.trim(), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
+    await proj.save();
+    res.json({ ok: true, id: newId });
+    return;
+  }
+
+  // ── rename_task ──
+  if (action === 'rename_task') {
+    const { projectId, taskId, text } = req.body;
+    if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const task = proj.tasks.find(t => t.id === taskId);
+    if (task) task.text = text.trim();
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── update_task_meta ──
+  if (action === 'update_task_meta') {
+    const { projectId, taskId, deadline, assignee, assignees, priority, comments } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const task = proj.tasks.find(t => t.id === taskId);
+    if (task) {
+      if (deadline  !== undefined) task.deadline  = deadline.trim();
+      if (assignee  !== undefined) task.assignee  = assignee.trim();
+      if (assignees !== undefined) task.assignees = Array.isArray(assignees) ? assignees : [];
+      if (priority  !== undefined) task.priority  = priority.trim();
+      if (comments  !== undefined) task.comments  = Array.isArray(comments) ? comments : [];
+    }
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── delete_task ──
+  if (action === 'delete_task') {
+    const { projectId, taskId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const tIdx = proj.tasks.findIndex(t => t.id === taskId);
+    if (tIdx > -1) {
+      for (const f of proj.tasks[tIdx].files || []) await deleteStoredFile(f);
+      proj.tasks.splice(tIdx, 1);
+      await proj.save();
+    }
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── restore_task ──
+  if (action === 'restore_task') {
+    const { projectId, task } = req.body;
+    if (!task?.id || !task?.text) { res.status(400).json({ error: 'Invalid task' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const safeTask = {
+      id: String(task.id),
+      text: String(task.text).trim().slice(0, 1000),
+      done: Boolean(task.done),
+      priority: ['urgent', 'important', 'later', ''].includes(task.priority) ? task.priority : '',
+      deadline: task.deadline || '',
+      badge: String(task.badge || 'Custom').slice(0, 50),
+      assignees: Array.isArray(task.assignees) ? task.assignees.map(String) : [],
+      comments: Array.isArray(task.comments) ? task.comments : [],
+      notes: '', richNotes: '', files: [],
+    };
+    proj.tasks.push(safeTask);
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── save_notes ──
+  if (action === 'save_notes') {
+    const { projectId, notes = '' } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { notes } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── save_project_rich_notes ──
+  if (action === 'save_project_rich_notes') {
+    const { projectId, notes = '' } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { richNotes: notes } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── save_task_notes ──
+  if (action === 'save_task_notes') {
+    const { projectId, taskId, notes = '' } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $set: { 'tasks.$.notes': notes } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── save_task_rich_notes ──
+  if (action === 'save_task_rich_notes') {
+    const { projectId, taskId, notes = '' } = req.body;
+    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $set: { 'tasks.$.richNotes': notes } });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── reorder_projects ──
+  if (action === 'reorder_projects') {
+    const { order } = req.body;
+    if (!Array.isArray(order)) { res.status(400).json({ error: 'Invalid order' }); return; }
+    const ops = order.map((id, index) => ({
+      updateOne: { filter: { id, ownerId: userId }, update: { $set: { __orderRank: index } } }
+    }));
+    if (ops.length) await Project.collection.bulkWrite(ops);
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── upload (project-level) ──
+  if (action === 'upload') {
+    const pid = req.body.projectId;
+    if (!pid || !req.file) { res.status(400).json({ error: 'Missing data' }); return; }
+    const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
+    const key = useR2 ? req.file.key : req.file.filename;
+    const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
+    await Project.updateOne({ id: pid, ownerId: userId }, { $push: { files: fe } });
+    res.json({ ok: true, file: fe });
+    return;
+  }
+
+  // ── upload_task_file ──
+  if (action === 'upload_task_file') {
+    const { projectId, taskId } = req.body;
+    if (!projectId || !taskId || !req.file) { res.status(400).json({ error: 'Missing data' }); return; }
+    const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
+    const key = useR2 ? req.file.key : req.file.filename;
+    const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
+    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $push: { 'tasks.$.files': fe } });
+    res.json({ ok: true, file: fe });
+    return;
+  }
+
+  // ── delete_file (project-level) ──
+  if (action === 'delete_file') {
+    const { projectId, fileId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const f = proj.files.find(x => x.id === fileId);
+    if (f) await deleteStoredFile(f);
+    proj.files = proj.files.filter(x => x.id !== fileId);
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── delete_task_file ──
+  if (action === 'delete_task_file') {
+    const { projectId, taskId, fileId } = req.body;
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const task = proj.tasks.find(t => t.id === taskId);
+    if (task) {
+      const f = task.files.find(x => x.id === fileId);
+      if (f) await deleteStoredFile(f);
+      task.files = task.files.filter(x => x.id !== fileId);
+    }
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── add_space ──
+  if (action === 'add_space') {
+    const { title, icon = '📁', color = '#6366f1', description = '' } = req.body;
+    if (!title?.trim()) { res.status(400).json({ error: 'Title required' }); return; }
+    const count = await Space.countDocuments({ ownerId: userId });
+    const newId = 'space_' + uid();
+    await Space.create({ id: newId, title: title.trim(), icon, color, description, ownerId: userId, __orderRank: count });
+    res.json({ ok: true, id: newId });
+    return;
+  }
+
+  // ── rename_space ──
+  if (action === 'rename_space') {
+    const { spaceId, title, icon, color, description } = req.body;
+    if (!spaceId) { res.status(400).json({ error: 'Missing spaceId' }); return; }
+    const update = {};
+    if (title !== undefined) update.title = title.trim();
+    if (icon !== undefined) update.icon = icon;
+    if (color !== undefined) update.color = color;
+    if (description !== undefined) update.description = description;
+    await Space.updateOne({ id: spaceId, ownerId: userId }, { $set: update });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── delete_space ──
+  if (action === 'delete_space') {
+    const { spaceId } = req.body;
+    if (!spaceId) { res.status(400).json({ error: 'Missing spaceId' }); return; }
+    const spaceProjects = await Project.find({ spaceId, ownerId: userId }).lean();
+    for (const p of spaceProjects) {
+      for (const f of p.files || []) await deleteStoredFile(f);
+      for (const t of p.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
+      await Project.deleteOne({ id: p.id, ownerId: userId });
+    }
+    await Space.deleteOne({ id: spaceId, ownerId: userId });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── invite_space_collaborator ──
+  if (action === 'invite_space_collaborator') {
+    const { spaceId, name = '', email, role = 'editor' } = req.body;
+    if (!spaceId || !email?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    const space = await Space.findOne({ id: spaceId, ownerId: userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    const exists = (space.collaborators || []).some(c => c.email?.toLowerCase() === email.toLowerCase());
+    if (exists) { res.status(400).json({ error: 'Collaborator already exists' }); return; }
+    space.collaborators.push({ id: crypto.randomUUID(), name: (name.trim() || email.replace(/@.*/, '')), email: email.trim(), role });
+    await space.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── update_space_collaborator_role ──
+  if (action === 'update_space_collaborator_role') {
+    const { spaceId, collaboratorId, role } = req.body;
+    if (!spaceId || !collaboratorId || !role) { res.status(400).json({ error: 'Missing data' }); return; }
+    const space = await Space.findOne({ id: spaceId, ownerId: userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    const collab = space.collaborators.find(c => c.id === collaboratorId);
+    if (!collab) { res.status(404).json({ error: 'Collaborator not found' }); return; }
+    collab.role = role;
+    await space.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── remove_space_collaborator ──
+  if (action === 'remove_space_collaborator') {
+    const { spaceId, collaboratorId } = req.body;
+    if (!spaceId || !collaboratorId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const space = await Space.findOne({ id: spaceId, ownerId: userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    space.collaborators = space.collaborators.filter(c => c.id !== collaboratorId);
+    await space.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── reorder_spaces ──
+  if (action === 'reorder_spaces') {
+    const { order } = req.body;
+    if (!Array.isArray(order)) { res.status(400).json({ error: 'Invalid order' }); return; }
+    const ops = order.map((id, index) => ({
+      updateOne: { filter: { id, ownerId: userId }, update: { $set: { __orderRank: index } } }
+    }));
+    if (ops.length) await Space.collection.bulkWrite(ops);
+    res.json({ ok: true });
+    return;
+  }
+
+  res.status(404).json({ error: 'Unknown action' });
+});
+
+module.exports = { router, seedDefaultData };

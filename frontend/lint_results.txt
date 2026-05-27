@@ -1,0 +1,210 @@
+
+> frontend@0.0.0 lint
+> eslint .
+
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/dev-dist/sw.js
+  34:13  error  'importScripts' is not defined  no-undef
+  70:1   error  'define' is not defined         no-undef
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/dev-dist/workbox-d488705a.js
+     1:1   error    'define' is not defined                                                         no-undef
+     5:37  error    '_' is not defined                                                              no-undef
+     6:14  error    'e' is defined but never used                                                   no-unused-vars
+     6:17  error    Empty block statement                                                           no-empty
+    52:7   error    Definition for rule '@typescript-eslint/ban-types' was not found                @typescript-eslint/ban-types
+   419:5   error    Definition for rule '@typescript-eslint/ban-types' was not found                @typescript-eslint/ban-types
+   435:5   warning  Unused eslint-disable directive (no problems were reported)
+   458:40  error    '_' is not defined                                                              no-undef
+   459:14  error    'e' is defined but never used                                                   no-unused-vars
+   459:17  error    Empty block statement                                                           no-empty
+   752:11  error    Definition for rule '@typescript-eslint/no-unsafe-member-access' was not found  @typescript-eslint/no-unsafe-member-access
+   754:13  error    Definition for rule '@typescript-eslint/no-unsafe-assignment' was not found     @typescript-eslint/no-unsafe-assignment
+   948:11  error    Definition for rule '@typescript-eslint/no-unsafe-assignment' was not found     @typescript-eslint/no-unsafe-assignment
+   964:13  error    Definition for rule '@typescript-eslint/no-unsafe-assignment' was not found     @typescript-eslint/no-unsafe-assignment
+   970:13  warning  Unused eslint-disable directive (no problems were reported)
+  1197:53  error    'registration' is not defined                                                   no-undef
+  1257:5   error    Definition for rule '@typescript-eslint/ban-types' was not found                @typescript-eslint/ban-types
+  1275:5   error    Definition for rule '@typescript-eslint/ban-types' was not found                @typescript-eslint/ban-types
+  1291:14  error    '_extends' is a function                                                        no-func-assign
+  1545:43  error    '_' is not defined                                                              no-undef
+  1546:14  error    'e' is defined but never used                                                   no-unused-vars
+  1546:17  error    Empty block statement                                                           no-empty
+  1967:22  error    'error' is defined but never used                                               no-unused-vars
+  2139:43  error    '_' is not defined                                                              no-undef
+  2140:14  error    'e' is defined but never used                                                   no-unused-vars
+  2140:17  error    Empty block statement                                                           no-empty
+  2365:56  error    'ExtendableEvent' is not defined                                                no-undef
+  2404:61  error    'FetchEvent' is not defined                                                     no-undef
+  2439:15  error    Unexpected constant condition                                                   no-constant-condition
+  2631:35  warning  Unused eslint-disable directive (no problems were reported)
+  2905:32  error    'FetchEvent' is not defined                                                     no-undef
+  2973:18  error    'error' is defined but never used                                               no-unused-vars
+  3363:43  error    '_' is not defined                                                              no-undef
+  3364:14  error    'e' is defined but never used                                                   no-unused-vars
+  3364:17  error    Empty block statement                                                           no-empty
+  3497:11  warning  Unused eslint-disable directive (no problems were reported)
+  3612:20  error    'error' is defined but never used                                               no-unused-vars
+  3647:43  error    'modifier' is defined but never used                                            no-unused-vars
+  4017:9   error    Definition for rule '@typescript-eslint/no-unsafe-return' was not found         @typescript-eslint/no-unsafe-return
+  4064:9   error    Definition for rule '@typescript-eslint/no-unsafe-return' was not found         @typescript-eslint/no-unsafe-return
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/App.jsx
+    2:27  error    'motion' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               no-unused-vars
+  100:5   error    Error: Cannot access variable before it is declared
+
+`checkAuth` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+   98 |     }
+   99 |     
+> 100 |     checkAuth();
+      |     ^^^^^^^^^ `checkAuth` accessed before it is declared
+  101 |   }, []);
+  102 |   const appDataRef = useRef({ projects: [] });
+  103 |
+
+  102 |   const appDataRef = useRef({ projects: [] });
+  103 |
+> 104 |   const checkAuth = async () => {
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 105 |     try {
+      | ^^^^^^^^^
+> 106 |       const r = await api('check', null, 'GET');
+      …
+      | ^^^^^^^^^
+> 115 |     }
+      | ^^^^^^^^^
+> 116 |   };
+      | ^^^^^ `checkAuth` is declared here
+  117 |
+  118 |   const handleAcceptInvite = () => {
+  119 |     // In a real app, send api('accept_invite', { token: inviteToken }) here  react-hooks/immutability
+  101:6   warning  React Hook useEffect has a missing dependency: 'checkAuth'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                react-hooks/exhaustive-deps
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/ActivityFeed.jsx
+  72:9  error  'hiddenCount' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/CommandPalette.jsx
+  21:6  warning  React Hook useEffect has a missing dependency: 'setIsOpen'. Either include it or remove the dependency array. If 'setIsOpen' changes too often, find the parent component that defines it and wrap that definition in useCallback                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        react-hooks/exhaustive-deps
+  25:7  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  23 |   useEffect(() => {
+  24 |     if (isOpen) {
+> 25 |       setQuery('');
+     |       ^^^^^^^^ Avoid calling setState() directly within an effect
+  26 |       setSelectedIndex(0);
+  27 |       setTimeout(() => inputRef.current?.focus(), 50);
+  28 |     }  react-hooks/set-state-in-effect
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/DialogModal.jsx
+  9:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+   7 |   useEffect(() => {
+   8 |     if (isOpen) {
+>  9 |       setInputValue(initialValue || '');
+     |       ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  10 |       if (type === 'prompt') {
+  11 |         setTimeout(() => {
+  12 |           if (inputRef.current) {  react-hooks/set-state-in-effect
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/NotificationModal.jsx
+  2:10  error  'motion' is defined but never used. Allowed unused vars must match /^[A-Z_]/u            no-unused-vars
+  3:10  error  'getContrastColor' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/QuoteBar.jsx
+  22:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  20 |   useEffect(() => {
+  21 |     // Pick initial quote randomly
+> 22 |     setQuoteIdx(Math.floor(Math.random() * QUOTES.length));
+     |     ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  23 |
+  24 |     const cycleId = setInterval(() => {
+  25 |       setFadeClass('fade-out');  react-hooks/set-state-in-effect
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/Sidebar.jsx
+   6:182  error  'onOpenSearch' is defined but never used                                                         no-unused-vars
+   6:196  error  'onOpenNotifications' is defined but never used                                                  no-unused-vars
+   6:217  error  'unreadNotifications' is assigned a value but never used                                         no-unused-vars
+  22:9    error  'renameProject' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u    no-unused-vars
+  86:9    error  'projectProgress' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/TaskItem.jsx
+   30:10  error  'notes' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u              no-unused-vars
+  107:9   error  'handleNotesChange' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  120:11  error  'html' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+  144:26  error  'e' is defined but never used                                                                      no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/components/WordpadModal.jsx
+  1:17  error  'useState' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/hooks/usePresence.js
+  39:14  error    '_' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            no-unused-vars
+  39:17  error    Empty block statement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    no-empty
+  50:37  error    'i' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            no-unused-vars
+  56:14  error    '_' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            no-unused-vars
+  56:17  error    Empty block statement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    no-empty
+  63:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  61 |
+  62 |     writeHeartbeat();
+> 63 |     readPresence();
+     |     ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  64 |
+  65 |     intervalRef.current = setInterval(() => {
+  66 |       writeHeartbeat();  react-hooks/set-state-in-effect
+  73:6   warning  React Hook useEffect has missing dependencies: 'readPresence' and 'writeHeartbeat'. Either include them or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   react-hooks/exhaustive-deps
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/views/InviteLandingView.jsx
+  2:10  error  'motion' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  4:45  error  'inviteToken' is defined but never used                                        no-unused-vars
+
+/Users/ishantchauhan/Projects/brainjot antigravity/brainjot mern/frontend/src/views/ProjectDetailView.jsx
+    7:10  error  'motion' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                                   no-unused-vars
+   12:7   error  'initials' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                        no-unused-vars
+   49:10  error  'notes' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                           no-unused-vars
+  110:9   error  'hasRichNotes' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                    no-unused-vars
+  162:9   error  'handleNotesChange' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                               no-unused-vars
+  203:12  error  Expected a conditional expression and instead saw an assignment                                                                                                                                                                                                                                                                                                                 no-cond-assign
+  317:7   error  Error: This value cannot be modified
+
+Modifying component props or hook arguments is not allowed. Consider using a local variable instead.
+
+  315 |
+  316 |     if (isSharedView) {
+> 317 |       project.tasks = project.tasks.filter(t => t.id !== taskId);
+      |       ^^^^^^^ `project` cannot be modified
+  318 |       onUpdate();
+  319 |       return;
+  320 |     }  react-hooks/immutability
+  374:9   error  'confirmDeleteProject' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                            no-unused-vars
+  389:9   error  'renameProject' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                   no-unused-vars
+  405:9   error  'duplicateProject' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                                                                                                no-unused-vars
+
+✖ 81 problems (74 errors, 7 warnings)
+  0 errors and 4 warnings potentially fixable with the `--fix` option.
+

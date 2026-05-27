@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: brainjot-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - brainjot-data:/data/db
+
+  backend:
+    build: ./backend
+    container_name: brainjot-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/brainjot
+      - APP_PASSWORD=ishant2026
+      - APP_SECRET=goals2026secretkey_changeme
+      - SESSION_SECRET=goals2026_secure_session_key
+      - UPLOADS_DIR=uploads
+    depends_on:
+      - mongodb
+    volumes:
+      - ./backend/uploads:/usr/src/app/uploads
+
+  frontend:
+    build: ./frontend
+    container_name: brainjot-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  brainjot-data:
