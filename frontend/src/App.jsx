@@ -102,12 +102,18 @@ export default function App() {
   const appDataRef = useRef({ projects: [] });
 
   const loadData = useCallback(async () => {
-    const data = await api('get', null, 'GET');
-    appDataRef.current = data;
-    setAppData(data);
-    setLoading(false);
-    // Schedule deadline reminders using live data ref
-    scheduleDeadlineReminders(() => appDataRef.current.projects || []);
+    try {
+      const data = await api('get', null, 'GET');
+      if (data?.spaces && data?.projects) {
+        appDataRef.current = data;
+        setAppData(data);
+        scheduleDeadlineReminders(() => appDataRef.current.projects || []);
+      }
+    } catch {
+      // keep existing appData on failure
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const checkAuth = useCallback(async () => {
@@ -224,7 +230,7 @@ export default function App() {
     }} />;
   }
 
-  const currentProject = appData.projects.find(p => p.id === currentProjectId);
+  const currentProject = (appData.projects || []).find(p => p.id === currentProjectId);
   const currentSharedProject = MOCK_SHARED_PROJECTS.find(p => p.id === currentSharedProjectId);
   const currentSharedSpace = MOCK_SHARED_SPACES.find(s => s.id === currentSharedSpaceId);
   const currentSpace = appData.spaces?.find(s => s.id === currentSpaceId);
@@ -417,7 +423,7 @@ export default function App() {
       {showCollab.open && (
         <CollabModal
           projectId={showCollab.projectId}
-          project={appData.projects.find(p => p.id === showCollab.projectId) || sharedProjects.find(p => p.id === showCollab.projectId)}
+          project={(appData.projects || []).find(p => p.id === showCollab.projectId) || sharedProjects.find(p => p.id === showCollab.projectId)}
           onClose={() => setShowCollab({ open: false, projectId: '' })}
           onUpdate={loadData}
           onUpdateRole={updateProjectCollabRole}
@@ -428,7 +434,7 @@ export default function App() {
       {showSpaceCollab.open && (
         <SpaceCollabModal
           spaceId={showSpaceCollab.spaceId}
-          space={appData.spaces.find(s => s.id === showSpaceCollab.spaceId)}
+          space={(appData.spaces || []).find(s => s.id === showSpaceCollab.spaceId)}
           onClose={() => setShowSpaceCollab({ open: false, spaceId: '' })}
           onUpdate={loadData}
           onUpdateRole={updateSpaceCollabRole}
