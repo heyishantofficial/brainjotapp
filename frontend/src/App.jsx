@@ -20,45 +20,8 @@ import NotificationModal from './components/NotificationModal';
 import InviteLandingView from './views/InviteLandingView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 
-// TODO: Replace with real API → GET /api/shared-projects (returns projects shared with the logged-in user)
-const MOCK_SHARED_SPACES = [
-  {
-    id: 'shared-space-1',
-    title: 'Product Team',
-    color: '#f59e0b',
-    description: 'Q3 product roadmap and execution',
-    sharedBy: 'Arjun Kapoor',
-    myRole: 'editor',
-    collaborators: [
-      { id: 'sc1', name: 'Arjun Kapoor', role: 'editor' },
-      { id: 'sc2', name: 'Neha Singh', role: 'viewer' },
-    ],
-    projects: [
-      { id: 'msp1', spaceId: 'shared-space-1', title: 'Mobile App v2', archived: false, tasks: [{ done: true }, { done: true }, { done: false }, { done: false }, { done: false }] },
-      { id: 'msp2', spaceId: 'shared-space-1', title: 'Backend API', archived: false, tasks: [{ done: true }, { done: true }, { done: true }, { done: false }] },
-    ],
-  },
-];
-
-const MOCK_SHARED_PROJECTS = [
-  {
-    id: 'shared-demo-1',
-    title: 'Design Sprint Q3',
-    subtitle: 'UI overhaul planning',
-    color: '#6366f1',
-    sharedBy: 'Priya Sharma',
-    myRole: 'editor',
-    tasks: [
-      { id: 't1', text: 'Review Figma prototype', done: true, priority: 'urgent', createdAt: new Date().toISOString() },
-      { id: 't2', text: 'Finalise component library', done: false, priority: 'important', assignee: 'me', createdAt: new Date().toISOString() },
-      { id: 't3', text: 'User testing round 2', done: false, priority: 'later', createdAt: new Date().toISOString() },
-    ],
-    collaborators: [
-      { id: 'c1', name: 'Priya Sharma', role: 'editor' },
-    ],
-    files: [], tag: 'Design', notes: '', richNotes: '',
-  },
-];
+const MOCK_SHARED_SPACES = [];
+const MOCK_SHARED_PROJECTS = [];
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -91,12 +54,7 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   
-  // Mock notifications for demonstration
-  const [notifications, setNotifications] = useState([
-    { id: 'n1', actor: 'Priya Sharma', action: 'assigned you to', target: 'Finalise component library', time: '10m ago', icon: '👤', read: false },
-    { id: 'n2', actor: 'Rahul Mehta', action: 'completed', target: 'Review Figma prototype', time: '1h ago', icon: '✅', read: false },
-    { id: 'n3', actor: 'Priya Sharma', action: 'invited you to', target: 'Design Sprint Q3', time: '2h ago', icon: '📩', read: true }
-  ]);
+  const [notifications, setNotifications] = useState([]);
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const appDataRef = useRef({ projects: [] });

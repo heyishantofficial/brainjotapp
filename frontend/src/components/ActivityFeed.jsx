@@ -53,80 +53,11 @@ function hashColor(str) {
   return colors[Math.abs(hash) % colors.length];
 }
 
-export default function ActivityFeed({ project, collaborators = [] }) {
-  const [expanded, setExpanded] = useState(false);
-
-  // TODO: Replace with real API call → GET /api/project/:id/activity
-  const mockEvents = generateMockEvents(project, collaborators);
-
-  if (mockEvents.length === 0) {
-    return (
-      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--faint)', fontSize: '13px' }}>
-        <div style={{ fontSize: '32px', marginBottom: '8px' }}>📋</div>
-        No activity yet. Start adding tasks!
-      </div>
-    );
-  }
-
-  const visibleEvents = expanded ? mockEvents : mockEvents.slice(0, PREVIEW_COUNT);
-  const _hiddenCount = mockEvents.length - PREVIEW_COUNT; // reserved for future "Show N more" button
-
+export default function ActivityFeed() {
   return (
-    <div className="activity-feed">
-      {visibleEvents.map((event) => {
-        const config = EVENT_CONFIG[event.type] || { icon: '•', color: 'var(--muted)', verb: () => 'did something' };
-        const avatarBg = hashColor(event.userId || event.userName);
-
-        return (
-          <div key={event.id} className="activity-item">
-            {/* Avatar */}
-            <div className="activity-avatar" style={{ background: avatarBg }}>
-              {initials(event.userName)}
-            </div>
-
-            {/* Content */}
-            <div className="activity-content">
-              <div className="activity-text">
-                <span className="activity-user">{event.userName}</span>
-                <span style={{ color: config.color, margin: '0 4px', fontSize: '15px' }}>{config.icon}</span>
-                <span className="activity-verb">{config.verb(event.meta || {})}</span>
-              </div>
-              <div className="activity-time">{timeAgo(event.createdAt)}</div>
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Toggle button */}
-      {mockEvents.length > PREVIEW_COUNT && (
-        <button
-          onClick={() => setExpanded(v => !v)}
-          style={{
-            width: '100%',
-            marginTop: '8px',
-            padding: '8px 0',
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--accent)',
-            fontSize: '12px',
-            fontWeight: '700',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            borderRadius: '8px',
-            transition: 'background 0.15s',
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-        >
-          {expanded
-            ? <>↑ Show less</>
-            : <>{`↓ Show all ${mockEvents.length} activities`}</>
-          }
-        </button>
-      )}
+    <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--faint)', fontSize: '13px' }}>
+      <div style={{ fontSize: '32px', marginBottom: '8px' }}>📋</div>
+      No activity yet. Start adding tasks!
     </div>
   );
 }
