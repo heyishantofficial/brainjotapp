@@ -331,9 +331,15 @@ router.get('/', async (req, res) => {
     const projects = await Project.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
     const sharedProjectDocs = await Project.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
     const sharedSpaceDocs   = await Space.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
+    // Look up owner info so collaborators can @mention the owner in comments
+    const allOwnerIds = [...new Set([...sharedProjectDocs.map(p => p.ownerId), ...sharedSpaceDocs.map(s => s.ownerId)])].filter(Boolean);
+    const ownerUsers = allOwnerIds.length ? await User.find({ id: { $in: allOwnerIds } }).select('id name username avatarUrl -_id').lean() : [];
+    const ownerMap = Object.fromEntries(ownerUsers.map(u => [u.id, u]));
     const annotateShared = (items) => items.map(item => {
       const me = (item.collaborators || []).find(c => c.userId === userId);
-      return { ...item, myRole: me?.role || 'viewer' };
+      const ownerUser = ownerMap[item.ownerId];
+      const ownerInfo = ownerUser ? { userId: item.ownerId, name: ownerUser.name, username: ownerUser.username || '', avatarUrl: ownerUser.avatarUrl || '' } : null;
+      return { ...item, myRole: me?.role || 'viewer', ownerInfo };
     });
     res.json({
       spaces: toPlain(spaces),

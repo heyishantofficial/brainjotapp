@@ -72,6 +72,11 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const activeTasks = isSharedView ? localTasks : (project.tasks || []);
 
+  // For shared views include the owner so collaborators can @mention them
+  const mentionUsers = isSharedView && project.ownerInfo
+    ? [project.ownerInfo, ...(project.collaborators || [])]
+    : (project.collaborators || []);
+
   const processedTasks = [...activeTasks]
     .filter(t => {
       if (hideCompleted && t.done) return false;
@@ -611,7 +616,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
                       isCommenter={isSharedView && currentUserRole === 'commenter'}
                       currentUser={currentUser}
-                      collaborators={project.collaborators || []}
+                      collaborators={mentionUsers}
                     />
                   </motion.div>
                 ))}
@@ -661,7 +666,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
                           isCommenter={isSharedView && currentUserRole === 'commenter'}
                           currentUser={currentUser}
-                          collaborators={project.collaborators || []}
+                          collaborators={mentionUsers}
                         />
                       </motion.div>
                     ))}
