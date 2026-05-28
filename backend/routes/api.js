@@ -334,6 +334,19 @@ router.get('/', async (req, res) => {
     return;
   }
 
+  if (action === 'get_task_comments') {
+    const { projectId, taskId } = req.query;
+    if (!projectId || !taskId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const proj = await Project.findOne({
+      id: projectId,
+      $or: [{ ownerId: userId }, { 'collaborators.userId': userId }],
+    }).select('tasks -_id').lean();
+    if (!proj) { res.status(404).json({ error: 'Not found' }); return; }
+    const taskDoc = (proj.tasks || []).find(t => t.id === taskId);
+    res.json({ comments: taskDoc?.comments || [] });
+    return;
+  }
+
   res.status(404).json({ error: 'Unknown action' });
 });
 

@@ -33,13 +33,15 @@ export default function TaskItem({
   const [showAssigneeDropdown, setShowAssigneeDropdown] = useState(false);
   const [notesStatus, setNotesStatus] = useState('Auto-saves');
   const [chatInput, setChatInput] = useState('');
-  
+  const [localComments, setLocalComments] = useState(task.comments || []);
+
   const notesTimerRef = useRef(null);
   const fileInputRef = useRef(null);
   const dateInputRef = useRef(null);
   const taskRichNotesRef = useRef(null);
   const lastServerRichNotes = useRef(null);
   const assigneeDropdownRef = useRef(null);
+  const chatThreadRef = useRef(null);
 
   const fileCount = (task.files || []).length;
   const hasNotes = (task.notes || '').trim().length > 0 || (task.richNotes || '').trim().length > 0;
@@ -62,6 +64,31 @@ export default function TaskItem({
       taskRichNotesRef.current.innerHTML = DOMPurify.sanitize(currentRich);
     }
   }, [task.richNotes, task.notes]);
+
+  // Sync comments from parent when project data refreshes
+  useEffect(() => {
+    setLocalComments(task.comments || []);
+  }, [task.comments]);
+
+  // Poll for new comments every 5s while task is open
+  useEffect(() => {
+    if (!isOpen) return;
+    const poll = async () => {
+      const r = await api('get_task_comments', null, 'GET',
+        `&projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`);
+      if (r?.comments) setLocalComments(r.comments);
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, [isOpen, project.id, task.id]);
+
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    if (isOpen && chatThreadRef.current) {
+      chatThreadRef.current.scrollTop = chatThreadRef.current.scrollHeight;
+    }
+  }, [localComments, isOpen]);
 
   const priorityMeta = PRIORITIES[task.priority] || null;
   const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
@@ -166,7 +193,15 @@ export default function TaskItem({
     const text = chatInput.trim();
     const mentions = [...text.matchAll(/@([a-z0-9_]+)/gi)].map(m => m[1].toLowerCase());
     setChatInput('');
-    await api('add_task_comment', { projectId: project.id, taskId: task.id, text, mentions });
+    const tempId = 'tmp_' + Date.now();
+    setLocalComments(prev => [...prev, {
+      id: tempId, userId: currentUser?.id, name: currentUser?.name || 'Me',
+      username: currentUser?.username || '', text, mentions, createdAt: new Date().toISOString(),
+    }]);
+    const r = await api('add_task_comment', { projectId: project.id, taskId: task.id, text, mentions });
+    if (r?.comment) {
+      setLocalComments(prev => prev.map(c => c.id === tempId ? r.comment : c));
+    }
     onUploadComplete();
   };
 
@@ -439,51 +474,97 @@ export default function TaskItem({
           )}
         </div>
 
-        {/* --- Task Level Chat Section --- */}
-        <div className="task-chat-section">
-          <div className="task-panel-label" style={{ marginBottom: '8px' }}>Task Discussion</div>
+        {/* --- Task Discussion --- */}
+        <div style={{ marginTop: '14px' }}>
+          <div className="task-panel-label" style={{ marginBottom: '10px' }}>Task Discussion</div>
 
-          <div className="chat-thread" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto', paddingBottom: '8px' }}>
-            {(!task.comments || task.comments.length === 0) ? (
-              <div style={{ fontSize: '13px', color: 'var(--muted)', textAlign: 'center', padding: '16px 0' }}>No comments yet. Start the discussion!</div>
+          {/* Messages thread */}
+          <div ref={chatThreadRef} style={{
+            display: 'flex', flexDirection: 'column', gap: '8px',
+            maxHeight: '300px', overflowY: 'auto', paddingRight: '2px', marginBottom: '10px',
+          }}>
+            {localComments.length === 0 ? (
+              <div style={{ fontSize: '13px', color: 'var(--muted)', textAlign: 'center', padding: '20px 0' }}>
+                No messages yet. Start the discussion!
+              </div>
             ) : (
-              task.comments.map(msg => {
+              localComments.map(msg => {
                 const isMine = msg.userId === currentUser?.id || msg.author === 'Me';
                 const displayName = msg.name || msg.author || 'User';
-                const handle = msg.username ? `@${msg.username}` : null;
                 const timeLabel = msg.createdAt
                   ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   : (msg.time || '');
                 return (
-                  <div key={msg.id} className={`chat-bubble ${isMine ? 'mine' : 'theirs'}`}>
+                  <div key={msg.id} style={{
+                    display: 'flex', flexDirection: isMine ? 'row-reverse' : 'row',
+                    alignItems: 'flex-end', gap: '7px',
+                  }}>
                     {!isMine && (
-                      <div style={{ fontSize: '11px', fontWeight: '800', marginBottom: '2px', opacity: 0.8 }}>
-                        {displayName}{handle && <span style={{ color: 'var(--accent)', marginLeft: '4px' }}>{handle}</span>}
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        background: getAvatarColor(displayName), color: '#fff',
+                        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '10px', fontWeight: '800', marginBottom: '2px',
+                      }}>
+                        {getInitials(displayName).slice(0, 2)}
                       </div>
                     )}
-                    <div>
-                      {msg.text.split(/(@[a-z0-9_]+)/gi).map((part, i) =>
-                        /^@[a-z0-9_]+$/i.test(part)
-                          ? <span key={i} style={{ color: 'var(--accent)', fontWeight: '700' }}>{part}</span>
-                          : part
+                    <div style={{
+                      maxWidth: '72%',
+                      background: isMine ? 'var(--accent)' : 'var(--surface2)',
+                      color: isMine ? '#000' : 'var(--text)',
+                      borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                      padding: '8px 12px',
+                    }}>
+                      {!isMine && (
+                        <div style={{ fontSize: '11px', fontWeight: '800', marginBottom: '3px', opacity: 0.75 }}>
+                          {displayName}
+                        </div>
                       )}
+                      <div style={{ fontSize: '13px', lineHeight: '1.4', wordBreak: 'break-word' }}>
+                        {msg.text.split(/(@[a-z0-9_]+)/gi).map((part, i) =>
+                          /^@[a-z0-9_]+$/i.test(part)
+                            ? <span key={i} style={{ fontWeight: '700', color: isMine ? '#00000088' : 'var(--accent)' }}>{part}</span>
+                            : part
+                        )}
+                      </div>
+                      <div style={{ fontSize: '10px', marginTop: '3px', opacity: 0.45, textAlign: 'right' }}>
+                        {timeLabel}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '10px', marginTop: '4px', opacity: 0.5, textAlign: isMine ? 'right' : 'left' }}>{timeLabel}</div>
                   </div>
                 );
               })
             )}
           </div>
 
+          {/* Input row */}
           {(!readOnly || isCommenter) && (
-            <div style={{ marginTop: '8px' }}>
-              <MentionInput
-                value={chatInput}
-                onChange={setChatInput}
-                onSubmit={handleSendComment}
-                placeholder="Write a comment… Type @ to mention"
-                collaborators={collaborators}
-              />
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <MentionInput
+                  value={chatInput}
+                  onChange={setChatInput}
+                  onSubmit={handleSendComment}
+                  placeholder="Message… (@ to mention)"
+                  collaborators={collaborators}
+                />
+              </div>
+              <button
+                onClick={handleSendComment}
+                disabled={!chatInput.trim()}
+                style={{
+                  width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
+                  background: chatInput.trim() ? 'var(--accent)' : 'var(--surface2)',
+                  color: chatInput.trim() ? '#000' : 'var(--muted)',
+                  border: 'none', cursor: chatInput.trim() ? 'pointer' : 'default',
+                  fontSize: '17px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.15s',
+                }}
+                title="Send"
+              >
+                ↑
+              </button>
             </div>
           )}
         </div>
