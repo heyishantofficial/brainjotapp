@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Search } from 'lucide-react';
+import { Bell, Search, MessageSquarePlus } from 'lucide-react';
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
@@ -24,6 +24,7 @@ export default function SpaceView({
   onEditSpace,
   onOpenSearch,
   onOpenNotifications,
+  onOpenFeedback,
   unreadNotifications = 0,
 }) {
   const activeProjects = projects.filter(p => !p.archived);
@@ -75,6 +76,9 @@ export default function SpaceView({
       {/* Icon row — identical pattern to DashboardView topbar */}
       <div className="topbar" style={{ position: 'relative', paddingTop: '60px' }}>
         <div className="topbar-right" style={{ position: 'absolute', top: '20px', right: '20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenFeedback} title="Beta Feedback">
+            <MessageSquarePlus size={20} strokeWidth={2.5} />
+          </button>
           <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenNotifications} title="Notifications">
             <span style={{ position: 'relative' }}>
               <Bell size={20} strokeWidth={2.5} />

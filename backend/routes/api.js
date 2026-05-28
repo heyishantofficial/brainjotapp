@@ -11,6 +11,7 @@ const { Resend } = require('resend');
 const Project = require('../models/Project');
 const Space = require('../models/Space');
 const User = require('../models/User');
+const Feedback = require('../models/Feedback');
 
 const router = express.Router();
 
@@ -279,6 +280,18 @@ router.get('/', async (req, res) => {
     return;
   }
 
+  if (action === 'get_feedback') {
+    const raw = await Feedback.find({}).sort({ createdAt: -1 }).limit(200).lean();
+    res.json({
+      items: raw.map(({ _id, __v, upvotes, ...rest }) => ({
+        ...rest,
+        upvoteCount: upvotes.length,
+        hasUpvoted: upvotes.includes(userId),
+      })),
+    });
+    return;
+  }
+
   res.status(404).json({ error: 'Unknown action' });
 });
 
@@ -345,6 +358,49 @@ router.post('/', async (req, res, next) => {
 
   if (!req.session.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const userId = req.session.userId;
+
+  // ── post_feedback ──
+  if (action === 'post_feedback') {
+    const { message, type = 'general' } = req.body;
+    if (!message?.trim()) { res.status(400).json({ error: 'Message required' }); return; }
+    const user = await User.findOne({ id: userId }).select('name -_id');
+    const item = await Feedback.create({
+      id: 'fb_' + uid(),
+      userId,
+      userName: user?.name || 'Anonymous',
+      message: message.trim().slice(0, 500),
+      type: ['bug','idea','general'].includes(type) ? type : 'general',
+      status: 'open',
+      upvotes: [],
+    });
+    const { _id, __v, upvotes, ...rest } = item.toObject();
+    res.json({ ok: true, item: { ...rest, upvoteCount: 0, hasUpvoted: false } });
+    return;
+  }
+
+  // ── toggle_feedback_status ──
+  if (action === 'toggle_feedback_status') {
+    const { feedbackId } = req.body;
+    const item = await Feedback.findOne({ id: feedbackId });
+    if (!item) { res.status(404).json({ error: 'Not found' }); return; }
+    item.status = item.status === 'open' ? 'fixed' : 'open';
+    await item.save();
+    res.json({ ok: true, status: item.status });
+    return;
+  }
+
+  // ── upvote_feedback ──
+  if (action === 'upvote_feedback') {
+    const { feedbackId } = req.body;
+    const item = await Feedback.findOne({ id: feedbackId });
+    if (!item) { res.status(404).json({ error: 'Not found' }); return; }
+    const idx = item.upvotes.indexOf(userId);
+    if (idx === -1) item.upvotes.push(userId);
+    else item.upvotes.splice(idx, 1);
+    await item.save();
+    res.json({ ok: true, upvoteCount: item.upvotes.length, hasUpvoted: idx === -1 });
+    return;
+  }
 
   // ── add_project ──
   if (action === 'add_project') {

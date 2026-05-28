@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Search } from 'lucide-react';
+import { Bell, Search, MessageSquarePlus } from 'lucide-react';
 import { api, apiForm } from '../api';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
@@ -41,7 +41,7 @@ function CountUp({ value }) {
   return <>{displayValue}</>;
 }
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, unreadNotifications = 0 }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0 }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [dialogConfig, setDialogConfig] = useState({ open: false, type: '', title: '', message: '', initialValue: '', onConfirm: null });
   const [notesStatus, setNotesStatus] = useState('Saved');
@@ -371,6 +371,9 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       </button>
 
       <div style={{ position: 'absolute', top: '20px', right: '30px', display: 'flex', gap: '12px', alignItems: 'center', zIndex: 100 }}>
+        <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenFeedback} title="Beta Feedback">
+          <MessageSquarePlus size={20} strokeWidth={2.5} />
+        </button>
         <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenNotifications} title="Notifications">
           <span style={{ position: 'relative' }}>
             <Bell size={20} strokeWidth={2.5} />

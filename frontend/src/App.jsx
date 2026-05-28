@@ -17,6 +17,7 @@ import WordpadModal from './components/WordpadModal';
 import CollabModal from './components/CollabModal';
 import SpaceCollabModal from './components/SpaceCollabModal';
 import NotificationModal from './components/NotificationModal';
+import FeedbackPanel from './components/FeedbackPanel';
 import InviteLandingView from './views/InviteLandingView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 
@@ -52,6 +53,7 @@ export default function App() {
   const [showCollab, setShowCollab] = useState({ open: false, projectId: '' });
   const [showSpaceCollab, setShowSpaceCollab] = useState({ open: false, spaceId: '' });
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   
   const [notifications, setNotifications] = useState([]);
@@ -254,6 +256,7 @@ export default function App() {
             onReorder={loadData}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}
             onOpenNotifications={() => setShowNotifications(true)}
+            onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
           />
         )}
@@ -268,6 +271,7 @@ export default function App() {
             onEditSpace={() => setShowEditSpace(currentSpace)}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}
             onOpenNotifications={() => setShowNotifications(true)}
+            onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
           />
         )}
@@ -282,6 +286,7 @@ export default function App() {
             onEditSpace={() => {}}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}
             onOpenNotifications={() => setShowNotifications(true)}
+            onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
           />
         )}
@@ -306,6 +311,7 @@ export default function App() {
                 onOpenLightbox={(url) => setLightboxUrl(url)}
                 onOpenSearch={() => setIsCommandPaletteOpen(true)}
                 onOpenNotifications={() => setShowNotifications(true)}
+                onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
               />
             </motion.div>
@@ -334,6 +340,7 @@ export default function App() {
                 onOpenLightbox={(url) => setLightboxUrl(url)}
                 onOpenSearch={() => setIsCommandPaletteOpen(true)}
                 onOpenNotifications={() => setShowNotifications(true)}
+                onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
               />
             </motion.div>
@@ -402,9 +409,14 @@ export default function App() {
 
       <NotificationModal
         isOpen={showNotifications}
-        onClose={() => setShowNotifications(false)} 
+        onClose={() => setShowNotifications(false)}
         notifications={notifications}
         onMarkAsRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+      />
+
+      <FeedbackPanel
+        isOpen={showFeedback}
+        onClose={() => setShowFeedback(false)}
       />
 
       <CommandPalette 
