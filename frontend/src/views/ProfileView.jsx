@@ -275,6 +275,19 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
           </div>
         </Section>
 
+        {/* ── Sign Out ── */}
+        <Section title="Session">
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '18px', padding: '22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: '700' }}>Sign Out</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>End your current session and return to the login screen</div>
+              </div>
+              <button onClick={onLogout} style={{ ...btnSecondary, whiteSpace: 'nowrap' }}>Sign Out</button>
+            </div>
+          </div>
+        </Section>
+
         {/* ── Danger Zone ── */}
         <Section title="Danger Zone">
           <div style={{ background: '#ef444408', border: '1px solid #ef444430', borderRadius: '18px', padding: '22px' }}>

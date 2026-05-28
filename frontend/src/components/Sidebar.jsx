@@ -33,8 +33,6 @@ export default function Sidebar({
   const [spaceCtxMenu,    setSpaceCtxMenu]    = useState({ open: false, x: 0, y: 0, space: null });
   const [showEditProject, setShowEditProject] = useState(false);
   const [showEditSpace,   setShowEditSpace]   = useState(null);
-  const [archivedExpanded, setArchivedExpanded] = useState(false);
-  const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [dialogConfig,    setDialogConfig]    = useState({ open: false, type: '', title: '', message: '', onConfirm: null });
 
   // Auto-expand the space that contains the active project or the active space
@@ -78,7 +76,6 @@ export default function Sidebar({
     }
   };
 
-  const archivedProjects = projects.filter(p => p.archived);
 
   // ── Project context menu actions ──────────────────────────────────
   const duplicateProject = async () => {
@@ -369,70 +366,6 @@ export default function Sidebar({
         )}
       </nav>
 
-      {/* Settings */}
-      <div className="sb-settings" style={{ padding: '16px 0', borderTop: '0.5px solid var(--border)', marginTop: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <button
-          className="nav-item"
-          onClick={() => setSettingsExpanded(!settingsExpanded)}
-          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'transparent', color: 'var(--text)', fontWeight: '800', letterSpacing: '0.5px', fontSize: '13px' }}
-        >
-          <span>⚙ SETTINGS</span>
-          <span style={{ fontSize: '10px', opacity: 0.5 }}>{settingsExpanded ? '▼' : '▲'}</span>
-        </button>
-
-        {settingsExpanded && (
-          <div className="settings-content" style={{ width: '100%', marginTop: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-            <div style={{ width: '100%', marginBottom: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div className="nav-label" style={{ fontSize: '10px', opacity: 0.4, marginBottom: '8px' }}>ACCOUNT</div>
-              <button className="nav-item" style={{ width: '90%', justifyContent: 'center', opacity: 0.7, cursor: 'default', background: 'transparent' }}>
-                <span style={{ fontSize: '14px' }}>👤</span><span>User Profile</span>
-              </button>
-            </div>
-
-            <div style={{ width: '100%', marginBottom: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div className="nav-label" style={{ fontSize: '10px', opacity: 0.4, marginBottom: '4px' }}>ARCHIVE</div>
-              <button
-                className="nav-item"
-                onClick={() => setArchivedExpanded(!archivedExpanded)}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'transparent' }}
-              >
-                <span style={{ fontSize: '14px' }}>📦</span>
-                <span style={{ fontWeight: '600' }}>Archived ({archivedProjects.length})</span>
-                <span style={{ fontSize: '10px', opacity: 0.5 }}>{archivedExpanded ? '▼' : '▶'}</span>
-              </button>
-              {archivedExpanded && archivedProjects.length > 0 && (
-                <div id="nav-archived" style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '4px' }}>
-                  {archivedProjects.map(p => (
-                    <button
-                      key={p.id}
-                      className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
-                      onClick={() => onSelect(p.id)}
-                      onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
-                      style={{ opacity: 0.6, fontSize: '13px', justifyContent: 'center', width: '85%' }}
-                    >
-                      <span className="nav-dot" style={{ background: p.color, filter: 'grayscale(0.5)' }}></span>
-                      <span className="nav-proj-title" style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{p.title}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {archivedExpanded && archivedProjects.length === 0 && (
-                <div style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '4px' }}>No archived projects</div>
-              )}
-            </div>
-
-            <div style={{ width: '80%', height: '1px', background: 'var(--border)', margin: '8px 0' }}></div>
-            <button
-              className="nav-item"
-              onClick={onLogout}
-              style={{ width: 'auto', minWidth: '120px', color: '#ff4c4c', background: 'rgba(255,76,76,0.05)', justifyContent: 'center', borderRadius: '12px', padding: '8px 16px', border: '0.5px solid rgba(255,76,76,0.2)', marginTop: '4px' }}
-            >
-              <span style={{ fontSize: '14px', marginRight: '8px' }}>🚪</span>
-              <span style={{ fontWeight: '700' }}>Sign out</span>
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Project context menu */}
       {contextMenu.open && (
