@@ -307,7 +307,18 @@ router.get('/', async (req, res) => {
   if (action === 'get') {
     const spaces   = await Space.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
     const projects = await Project.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
-    res.json({ spaces: toPlain(spaces), projects: toPlain(projects) });
+    const sharedProjectDocs = await Project.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
+    const sharedSpaceDocs   = await Space.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
+    const annotateShared = (items) => items.map(item => {
+      const me = (item.collaborators || []).find(c => c.userId === userId);
+      return { ...item, myRole: me?.role || 'viewer' };
+    });
+    res.json({
+      spaces: toPlain(spaces),
+      projects: toPlain(projects),
+      sharedProjects: annotateShared(sharedProjectDocs),
+      sharedSpaces: annotateShared(sharedSpaceDocs),
+    });
     return;
   }
 
@@ -1024,6 +1035,24 @@ router.post('/', async (req, res, next) => {
       await Notification.updateMany({ toUserId: userId, status: { $nin: ['pending', 'accepted', 'denied'] } }, { status: 'read' });
     }
     res.json({ ok: true });
+    return;
+  }
+
+  // ── set_username ──
+  if (action === 'set_username') {
+    const { username } = req.body;
+    const me = await User.findOne({ id: userId });
+    if (!me) { res.status(404).json({ error: 'User not found' }); return; }
+    if (me.username) { res.status(409).json({ error: 'Username already set and cannot be changed' }); return; }
+    const raw = (username || '').toLowerCase().trim();
+    if (!raw || raw.length < 3) { res.status(400).json({ error: 'Username must be at least 3 characters' }); return; }
+    if (raw.length > 20) { res.status(400).json({ error: 'Username must be 20 characters or less' }); return; }
+    if (!/^[a-z0-9_]+$/.test(raw)) { res.status(400).json({ error: 'Only letters, numbers and _ allowed' }); return; }
+    const exists = await User.findOne({ username: raw });
+    if (exists) { res.status(409).json({ error: 'Username already taken' }); return; }
+    me.username = raw;
+    await me.save();
+    res.json({ ok: true, username: raw });
     return;
   }
 

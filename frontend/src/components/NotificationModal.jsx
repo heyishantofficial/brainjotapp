@@ -26,10 +26,11 @@ function Avatar({ name }) {
   );
 }
 
-function NotifRow({ notif, onRespond }) {
+function NotifRow({ notif, onRespond, onNavigate }) {
   const [responding, setResponding] = useState(false);
 
-  const handleRespond = async (accept) => {
+  const handleRespond = async (e, accept) => {
+    e.stopPropagation();
     setResponding(true);
     await onRespond(notif.id, accept);
   };
@@ -37,9 +38,9 @@ function NotifRow({ notif, onRespond }) {
   const isInvite = notif.type === 'collab_invite';
   const isMention = notif.type === 'mention';
   const isPending = notif.status === 'pending';
+  const canNavigate = !!(notif.meta?.entityId && notif.meta?.entityType);
 
   const icon = isInvite ? '👥' : isMention ? '💬' : '🔔';
-  const isUnread = notif.status === 'pending' || notif.status === 'read' === false;
 
   let bodyText;
   if (isInvite) {
@@ -65,11 +66,17 @@ function NotifRow({ notif, onRespond }) {
   }
 
   return (
-    <div style={{
-      padding: '14px 20px',
-      borderBottom: '1px solid var(--border)',
-      background: isPending ? 'var(--surface2)' : 'transparent',
-    }}>
+    <div
+      onClick={canNavigate ? () => onNavigate?.({ entityType: notif.meta.entityType, entityId: notif.meta.entityId, taskId: notif.meta.taskId }) : undefined}
+      style={{
+        padding: '14px 20px',
+        borderBottom: '1px solid var(--border)',
+        background: isPending ? 'var(--surface2)' : 'transparent',
+        cursor: canNavigate ? 'pointer' : 'default',
+      }}
+      onMouseEnter={canNavigate ? e => { e.currentTarget.style.background = 'var(--surface2)'; } : undefined}
+      onMouseLeave={canNavigate ? e => { e.currentTarget.style.background = isPending ? 'var(--surface2)' : 'transparent'; } : undefined}
+    >
       <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
         <div style={{ fontSize: '18px', paddingTop: '2px' }}>{icon}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -83,14 +90,14 @@ function NotifRow({ notif, onRespond }) {
             <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
               <button
                 disabled={responding}
-                onClick={() => handleRespond(true)}
+                onClick={(e) => handleRespond(e, true)}
                 style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: '#000', fontSize: '12px', fontWeight: '800', cursor: responding ? 'default' : 'pointer', opacity: responding ? 0.6 : 1 }}
               >
                 {responding ? '…' : 'Accept'}
               </button>
               <button
                 disabled={responding}
-                onClick={() => handleRespond(false)}
+                onClick={(e) => handleRespond(e, false)}
                 style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', fontSize: '12px', fontWeight: '700', cursor: responding ? 'default' : 'pointer', opacity: responding ? 0.6 : 1 }}
               >
                 Deny
@@ -111,7 +118,7 @@ function NotifRow({ notif, onRespond }) {
   );
 }
 
-export default function NotificationModal({ isOpen, onClose, notifications, onRefresh }) {
+export default function NotificationModal({ isOpen, onClose, notifications, onRefresh, onNavigate }) {
   const modalRef = useRef(null);
 
   useEffect(() => {
@@ -175,7 +182,7 @@ export default function NotificationModal({ isOpen, onClose, notifications, onRe
                 </div>
               ) : (
                 notifications.map(n => (
-                  <NotifRow key={n.id} notif={n} onRespond={handleRespond} />
+                  <NotifRow key={n.id} notif={n} onRespond={handleRespond} onNavigate={onNavigate} />
                 ))
               )}
             </div>

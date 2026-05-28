@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
 function initials(name) {
@@ -81,6 +81,13 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const [pwMsg,  setPwMsg]  = useState('');
   const [pwSaving, setPwSaving] = useState(false);
 
+  // set username (for existing users without one)
+  const [unameVal,    setUnameVal]    = useState('');
+  const [unameStatus, setUnameStatus] = useState('idle'); // idle | checking | available | taken | error
+  const [unameMsg,    setUnameMsg]    = useState('');
+  const [unameSaving, setUnameSaving] = useState(false);
+  const unameDebounce = useRef(null);
+
   // delete account
   const [showDelete,  setShowDelete]  = useState(false);
   const [deletePw,    setDeletePw]    = useState('');
@@ -128,6 +135,37 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     if (r?.ok) { setPwMsg('✓ Password changed'); setCurPw(''); setNewPw(''); setConfPw(''); }
     else        { setPwMsg(r?.error || 'Something went wrong'); }
     setPwSaving(false);
+  };
+
+  const handleUnameChange = (raw) => {
+    const val = raw.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    setUnameVal(val);
+    setUnameStatus('idle');
+    setUnameMsg('');
+    clearTimeout(unameDebounce.current);
+    if (!val || val.length < 3) { setUnameStatus('idle'); return; }
+    setUnameStatus('checking');
+    unameDebounce.current = setTimeout(async () => {
+      const r = await api('check_username', null, 'GET', `&username=${encodeURIComponent(val)}`);
+      if (r?.available) { setUnameStatus('available'); setUnameMsg(''); }
+      else { setUnameStatus('taken'); setUnameMsg(r?.error || 'Username not available'); }
+    }, 500);
+  };
+
+  const handleSetUsername = async () => {
+    if (unameStatus !== 'available') return;
+    setUnameSaving(true);
+    const r = await api('set_username', { username: unameVal });
+    if (r?.ok) {
+      setProfileData(prev => ({ ...prev, user: { ...prev.user, username: r.username } }));
+      onUserUpdate?.({ username: r.username });
+      setUnameVal('');
+      setUnameStatus('idle');
+    } else {
+      setUnameMsg(r?.error || 'Something went wrong');
+      setUnameStatus('error');
+    }
+    setUnameSaving(false);
   };
 
   const handleExport = async () => {
@@ -202,6 +240,48 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             <StatCard label="FEEDBACK"   value={stats.feedbackCount}  color="#ec4899" />
           </div>
         </Section>
+
+        {/* ── Set Username (first time only) ── */}
+        {!user.username && (
+          <Section title="Claim Your @Username">
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--accent)', borderRadius: '18px', padding: '22px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: '1.6', marginTop: 0, marginBottom: '16px' }}>
+                Choose a permanent unique username — this is your <strong>@handle</strong> in BrainJot and cannot be changed later.
+              </p>
+              <Field label="Username">
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--accent)', fontWeight: '800', fontSize: '14px', pointerEvents: 'none' }}>@</span>
+                  <input
+                    value={unameVal}
+                    onChange={e => handleUnameChange(e.target.value)}
+                    style={{ ...inputStyle, paddingLeft: '28px' }}
+                    placeholder="yourhandle"
+                    maxLength={20}
+                    spellCheck={false}
+                  />
+                </div>
+                {unameVal.length > 0 && (
+                  <div style={{ marginTop: '6px', fontSize: '12px', fontWeight: '700',
+                    color: unameStatus === 'available' ? '#10b981' : unameStatus === 'taken' || unameStatus === 'error' ? '#ef4444' : 'var(--muted)' }}>
+                    {unameStatus === 'checking' && '⏳ Checking…'}
+                    {unameStatus === 'available' && '✓ Available'}
+                    {(unameStatus === 'taken' || unameStatus === 'error') && `✕ ${unameMsg}`}
+                  </div>
+                )}
+              </Field>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  onClick={handleSetUsername}
+                  disabled={unameSaving || unameStatus !== 'available'}
+                  style={{ ...btnPrimary, opacity: (unameSaving || unameStatus !== 'available') ? 0.5 : 1 }}
+                >
+                  {unameSaving ? 'Saving…' : 'Claim Username'}
+                </button>
+                <span style={{ fontSize: '11px', color: 'var(--faint)' }}>Lowercase letters, numbers, _ · 3–20 chars</span>
+              </div>
+            </div>
+          </Section>
+        )}
 
         {/* ── Edit Profile ── */}
         <Section title="Edit Profile">

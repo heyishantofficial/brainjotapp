@@ -23,8 +23,6 @@ import AdminView from './views/AdminView';
 import ProfileView from './views/ProfileView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 
-const MOCK_SHARED_SPACES = [];
-const MOCK_SHARED_PROJECTS = [];
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -33,8 +31,8 @@ export default function App() {
   const [appData, setAppData] = useState({ spaces: [], projects: [] });
   const [currentProjectId, setCurrentProjectId] = useState(null);
   const [currentSpaceId, setCurrentSpaceId] = useState(null);
-  const [sharedProjects, setSharedProjects] = useState(MOCK_SHARED_PROJECTS);
-  const [sharedSpaces] = useState(MOCK_SHARED_SPACES);
+  const [sharedProjects, setSharedProjects] = useState([]);
+  const [sharedSpaces, setSharedSpaces] = useState([]);
   const [currentSharedProjectId, setCurrentSharedProjectId] = useState(null);
   const [currentSharedSpaceId, setCurrentSharedSpaceId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -69,6 +67,13 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
+  // Poll notifications every 20 s while logged in
+  useEffect(() => {
+    if (!loggedIn) return;
+    const id = setInterval(loadNotifications, 20000);
+    return () => clearInterval(id);
+  }, [loggedIn, loadNotifications]);
+
   const appDataRef = useRef({ projects: [] });
 
   const loadData = useCallback(async () => {
@@ -77,6 +82,8 @@ export default function App() {
       if (data?.spaces && data?.projects) {
         appDataRef.current = data;
         setAppData(data);
+        if (Array.isArray(data.sharedProjects)) setSharedProjects(data.sharedProjects);
+        if (Array.isArray(data.sharedSpaces)) setSharedSpaces(data.sharedSpaces);
         scheduleDeadlineReminders(() => appDataRef.current.projects || []);
       }
     } catch {
@@ -128,6 +135,28 @@ export default function App() {
     setCurrentSharedProjectId('shared-demo-1');
   };
 
+
+  const handleNotifNavigate = useCallback(({ entityType, entityId, taskId }) => {
+    setShowNotifications(false);
+    setShowProfile(false);
+    if (entityType === 'project') {
+      const isOwned = (appData.projects || []).some(p => p.id === entityId);
+      setCurrentSpaceId(null);
+      setCurrentSharedSpaceId(null);
+      if (isOwned) { setCurrentProjectId(entityId); setCurrentSharedProjectId(null); }
+      else          { setCurrentSharedProjectId(entityId); setCurrentProjectId(null); }
+      if (taskId) {
+        setHighlightedTaskId(taskId);
+        setTimeout(() => setHighlightedTaskId(null), 2500);
+      }
+    } else if (entityType === 'space') {
+      const isOwned = (appData.spaces || []).some(s => s.id === entityId);
+      setCurrentProjectId(null);
+      setCurrentSharedProjectId(null);
+      if (isOwned) { setCurrentSpaceId(entityId); setCurrentSharedSpaceId(null); }
+      else          { setCurrentSharedSpaceId(entityId); setCurrentSpaceId(null); }
+    }
+  }, [appData.projects, appData.spaces]);
 
   const handleLogout = async () => {
     stopDeadlineReminders();
@@ -212,8 +241,8 @@ export default function App() {
   }
 
   const currentProject = (appData.projects || []).find(p => p.id === currentProjectId);
-  const currentSharedProject = MOCK_SHARED_PROJECTS.find(p => p.id === currentSharedProjectId);
-  const currentSharedSpace = MOCK_SHARED_SPACES.find(s => s.id === currentSharedSpaceId);
+  const currentSharedProject = sharedProjects.find(p => p.id === currentSharedProjectId);
+  const currentSharedSpace = sharedSpaces.find(s => s.id === currentSharedSpaceId);
   const currentSpace = appData.spaces?.find(s => s.id === currentSpaceId);
   const activeView = currentSharedProject ? 'shared' : currentSharedSpace ? 'shared-space' : currentProjectId ? 'project' : currentSpaceId && currentSpace ? 'space' : 'dashboard';
 
@@ -359,13 +388,13 @@ export default function App() {
               transition={{ duration: 0.18, ease: 'easeInOut' }}
               style={{ height: '100%' }}
             >
-              <ProjectDetailView 
+              <ProjectDetailView
                 project={currentSharedProject}
                 isSharedView={true}
                 sharedBy={currentSharedProject.sharedBy}
                 currentUserRole={currentSharedProject.myRole || 'viewer'}
                 onBack={() => setCurrentSharedProjectId(null)}
-                onUpdate={() => setAppData(prev => ({...prev}))} // Force re-render for mock local updates
+                onUpdate={loadData}
                 onToast={toast}
                 onOpenWordpad={() => {}}
                 onOpenCollab={() => {}}
@@ -374,6 +403,7 @@ export default function App() {
                 onOpenNotifications={() => setShowNotifications(true)}
                 onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
+                currentUser={currentUser}
               />
             </motion.div>
           </AnimatePresence>
@@ -443,7 +473,8 @@ export default function App() {
         isOpen={showNotifications}
         onClose={() => setShowNotifications(false)}
         notifications={notifications}
-        onRefresh={loadNotifications}
+        onRefresh={() => { loadNotifications(); loadData(); }}
+        onNavigate={handleNotifNavigate}
       />
 
       <FeedbackPanel
