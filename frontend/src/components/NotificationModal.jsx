@@ -22,10 +22,13 @@ function NotifRow({ notif, onRespond, onNavigate }) {
 
   const isInvite = notif.type === 'collab_invite';
   const isMention = notif.type === 'mention';
+  const isAssigned = notif.type === 'task_assigned';
+  const isInviteResponse = notif.type === 'invite_response';
+  const isTaskComment = notif.type === 'task_comment';
   const isPending = notif.status === 'pending';
   const canNavigate = !!(notif.meta?.entityId && notif.meta?.entityType);
 
-  const icon = isInvite ? '👥' : isMention ? '💬' : '🔔';
+  const icon = isInvite ? '👥' : isMention || isTaskComment ? '💬' : isAssigned ? '📋' : isInviteResponse ? '✅' : '🔔';
 
   let bodyText;
   if (isInvite) {
@@ -41,6 +44,36 @@ function NotifRow({ notif, onRespond, onNavigate }) {
       <>
         <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span> mentioned you in{' '}
         <span style={{ fontWeight: '800' }}>{notif.meta?.taskTitle || notif.meta?.entityTitle}</span>
+        {notif.meta?.commentText && (
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', fontStyle: 'italic' }}>"{notif.meta.commentText}"</div>
+        )}
+      </>
+    );
+  } else if (isAssigned) {
+    bodyText = (
+      <>
+        <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span> assigned you to{' '}
+        <span style={{ fontWeight: '800' }}>{notif.meta?.taskTitle || 'a task'}</span>
+        {notif.meta?.entityTitle && (
+          <span style={{ fontSize: '12px', color: 'var(--muted)' }}> in {notif.meta.entityTitle}</span>
+        )}
+      </>
+    );
+  } else if (isInviteResponse) {
+    bodyText = (
+      <>
+        <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span> accepted your invite to{' '}
+        <span style={{ fontWeight: '800' }}>{notif.meta?.entityTitle}</span>
+        {notif.meta?.role && (
+          <span style={{ fontSize: '12px', color: 'var(--muted)' }}> as {notif.meta.role}</span>
+        )}
+      </>
+    );
+  } else if (isTaskComment) {
+    bodyText = (
+      <>
+        <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span> commented on your task{' '}
+        <span style={{ fontWeight: '800' }}>{notif.meta?.taskTitle || 'a task'}</span>
         {notif.meta?.commentText && (
           <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', fontStyle: 'italic' }}>"{notif.meta.commentText}"</div>
         )}

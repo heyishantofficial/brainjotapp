@@ -784,7 +784,9 @@ router.post('/', async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, ownerId: userId });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
+    let prevAssignees = [];
     if (task) {
+      prevAssignees = [...(task.assignees || [])];
       if (deadline  !== undefined) task.deadline  = deadline.trim();
       if (assignee  !== undefined) task.assignee  = assignee.trim();
       if (assignees !== undefined) task.assignees = Array.isArray(assignees) ? assignees : [];
@@ -792,6 +794,27 @@ router.post('/', async (req, res, next) => {
       if (comments  !== undefined) task.comments  = Array.isArray(comments) ? comments : [];
     }
     await proj.save();
+    // Notify newly assigned users
+    if (task && assignees !== undefined) {
+      const prevSet = new Set(prevAssignees);
+      const newlyAdded = (task.assignees || []).filter(a => !prevSet.has(a) && a !== 'me');
+      if (newlyAdded.length) {
+        const assigner = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
+        const notifDocs = [];
+        for (const aid of newlyAdded) {
+          const collab = proj.collaborators.find(c => c.id === aid);
+          if (!collab?.userId || collab.userId === userId) continue;
+          notifDocs.push({
+            id: 'notif_' + uid(), toUserId: collab.userId, fromUserId: userId,
+            fromUsername: assigner.username || '', fromName: assigner.name, fromAvatarUrl: assigner.avatarUrl || '',
+            type: 'task_assigned',
+            meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId: task.id, taskTitle: task.text?.slice(0, 60) || '' },
+            status: 'pending',
+          });
+        }
+        if (notifDocs.length) await Notification.insertMany(notifDocs);
+      }
+    }
     res.json({ ok: true });
     return;
   }
@@ -1062,6 +1085,16 @@ router.post('/', async (req, res, next) => {
       } else {
         await Space.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
       }
+      // Notify the inviter that their invite was accepted
+      if (notif.fromUserId) {
+        await Notification.create({
+          id: 'notif_' + uid(), toUserId: notif.fromUserId, fromUserId: userId,
+          fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
+          type: 'invite_response',
+          meta: { entityId: notif.meta.entityId, entityType: notif.meta.entityType, entityTitle: notif.meta.entityTitle, role: notif.meta.role },
+          status: 'pending',
+        });
+      }
     }
     res.json({ ok: true, accepted: accept });
     return;
@@ -1106,17 +1139,29 @@ router.post('/', async (req, res, next) => {
     const me = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
     const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, avatarUrl: me.avatarUrl || '', text: text.trim().slice(0, 1000), mentions, createdAt: new Date() };
     await Project.updateOne({ id: projectId, 'tasks.id': taskId }, { $push: { 'tasks.$.comments': comment } });
+    const task = proj.tasks.find(t => t.id === taskId);
+    const notifBase = { fromUserId: userId, fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '', status: 'pending' };
+    const allNotifs = [];
+    // @mention notifications
+    let mentionedUserIds = new Set();
     if (mentions.length) {
       const mentionedUsers = await User.find({ username: { $in: mentions } }).select('id -_id').lean();
-      const task = proj.tasks.find(t => t.id === taskId);
-      const notifDocs = mentionedUsers.filter(u => u.id !== userId).map(u => ({
-        id: 'notif_' + uid(), toUserId: u.id, fromUserId: userId, fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
-        type: 'mention',
-        meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) },
-        status: 'pending',
-      }));
-      if (notifDocs.length) await Notification.insertMany(notifDocs);
+      mentionedUsers.filter(u => u.id !== userId).forEach(u => {
+        mentionedUserIds.add(u.id);
+        allNotifs.push({ id: 'notif_' + uid(), ...notifBase, toUserId: u.id, type: 'mention',
+          meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) } });
+      });
     }
+    // task_comment notifications for assignees not already @mentioned
+    for (const aid of (task?.assignees || [])) {
+      let toUserId;
+      if (aid === 'me') { toUserId = proj.ownerId; }
+      else { toUserId = proj.collaborators.find(c => c.id === aid)?.userId; }
+      if (!toUserId || toUserId === userId || mentionedUserIds.has(toUserId)) continue;
+      allNotifs.push({ id: 'notif_' + uid(), ...notifBase, toUserId, type: 'task_comment',
+        meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) } });
+    }
+    if (allNotifs.length) await Notification.insertMany(allNotifs);
     res.json({ ok: true, comment });
     return;
   }

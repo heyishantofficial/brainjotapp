@@ -7,7 +7,7 @@ const notifSchema = new mongoose.Schema({
   fromUsername:  String,
   fromName:      String,
   fromAvatarUrl: String,
-  type: { type: String, enum: ['collab_invite', 'mention', 'comment'], required: true },
+  type: { type: String, enum: ['collab_invite', 'mention', 'comment', 'task_assigned', 'invite_response', 'task_comment'], required: true },
   meta: {
     entityId:    String,
     entityType:  String,
