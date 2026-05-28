@@ -36,6 +36,7 @@ export default function TaskItem({
   const [chatInput, setChatInput] = useState('');
   const [localComments, setLocalComments] = useState(task.comments || []);
   const [showLabelPicker, setShowLabelPicker] = useState(false);
+  const [labelPickerPos, setLabelPickerPos] = useState({ top: 0, left: 0 });
   const [creatingLabel, setCreatingLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
@@ -106,19 +107,7 @@ export default function TaskItem({
     }
   }, [highlighted]);
 
-  // Close label picker on outside click
-  useEffect(() => {
-    if (!showLabelPicker) return;
-    const handleClick = (e) => {
-      if (labelPickerRef.current && !labelPickerRef.current.contains(e.target)) {
-        setShowLabelPicker(false);
-        setCreatingLabel(false);
-        setNewLabelName('');
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showLabelPicker]);
+  const closeLabelPicker = () => { setShowLabelPicker(false); setCreatingLabel(false); setNewLabelName(''); };
 
   const LABEL_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1','#94a3b8'];
   const projectLabels = project.labels || [];
@@ -315,10 +304,10 @@ export default function TaskItem({
         )}
 
         {!isEditing && (
-          <div style={{ position: 'relative', flexShrink: 0 }} ref={labelPickerRef}>
+          <div style={{ flexShrink: 0 }} ref={labelPickerRef}>
             {currentLabel ? (
               <button
-                onClick={(e) => { e.stopPropagation(); if (!readOnly) setShowLabelPicker(v => !v); }}
+                onClick={(e) => { e.stopPropagation(); if (!readOnly) { const r = e.currentTarget.getBoundingClientRect(); setLabelPickerPos({ top: r.bottom + 6, left: r.left }); setShowLabelPicker(v => !v); } }}
                 style={{ background: `${currentLabel.color}22`, color: currentLabel.color, border: `1px solid ${currentLabel.color}55`, borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '700', cursor: readOnly ? 'default' : 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}
               >
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: currentLabel.color, flexShrink: 0 }} />
@@ -326,7 +315,7 @@ export default function TaskItem({
               </button>
             ) : !readOnly ? (
               <button
-                onClick={(e) => { e.stopPropagation(); setShowLabelPicker(v => !v); }}
+                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setLabelPickerPos({ top: r.bottom + 6, left: r.left }); setShowLabelPicker(v => !v); }}
                 style={{ background: 'transparent', border: '1px dashed var(--border)', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', color: 'var(--faint)', cursor: 'pointer', fontWeight: '600' }}
               >
                 + label
@@ -334,10 +323,12 @@ export default function TaskItem({
             ) : null}
 
             {showLabelPicker && (
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 300, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', minWidth: '200px', padding: '6px' }}
-              >
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 298 }} onClick={(e) => { e.stopPropagation(); closeLabelPicker(); }} />
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{ position: 'fixed', top: labelPickerPos.top, left: labelPickerPos.left, zIndex: 299, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', minWidth: '200px', padding: '6px' }}
+                >
                 {currentLabel && (
                   <button onClick={() => selectLabel('')} style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--muted)', fontWeight: '600', textAlign: 'left' }} onMouseEnter={e => e.currentTarget.style.background='var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
                     ✕ No label
@@ -389,10 +380,11 @@ export default function TaskItem({
                   </div>
                 )}
               </div>
+              </>
             )}
           </div>
         )}
-        
+
         {!isEditing && (
           <div className="task-meta-row">
             {priorityMeta && <span className={`meta-pill priority-${task.priority}`} title={priorityMeta.label}>{priorityMeta.icon}</span>}
