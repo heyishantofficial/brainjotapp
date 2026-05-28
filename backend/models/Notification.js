@@ -16,6 +16,7 @@ const notifSchema = new mongoose.Schema({
     taskId:      String,
     taskTitle:   String,
     commentText: String,
+    accepted:    Boolean,
   },
   status: { type: String, enum: ['pending', 'accepted', 'denied', 'read'], default: 'pending' },
   createdAt: { type: Date, default: Date.now },

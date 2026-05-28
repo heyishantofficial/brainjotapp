@@ -153,8 +153,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const addTask = async () => {
     if (!newTaskText.trim()) return;
-    
-    if (isSharedView) {
+
+    if (isSharedView && currentUserRole !== 'editor') {
       const newTask = { id: 'new-' + Date.now(), text: newTaskText, done: false, priority: 'later', createdAt: new Date().toISOString() };
       setLocalTasks(prev => [newTask, ...prev]);
       setNewTaskText('');
@@ -265,7 +265,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
     const isCompletingLast = isMarkingDone && otherIncompleteCount === 0;
 
-    if (isSharedView) {
+    if (isSharedView && currentUserRole !== 'editor') {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: !isCurrentlyDone } : t));
       onUpdate();
       if (isCompletingLast) {
@@ -293,7 +293,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       action: {
         label: 'Undo',
         onClick: async () => {
-          if (isSharedView) {
+          if (isSharedView && currentUserRole !== 'editor') {
             setLocalTasks(prev => [...prev, taskToDelete]);
             onUpdate();
             return;
@@ -304,7 +304,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       }
     });
 
-    if (isSharedView) {
+    if (isSharedView && currentUserRole !== 'editor') {
       setLocalTasks(prev => prev.filter(t => t.id !== taskId));
       onUpdate();
       return;
@@ -315,7 +315,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   };
 
   const updateTaskText = async (taskId, text) => {
-    if (isSharedView) {
+    if (isSharedView && currentUserRole !== 'editor') {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, text } : t));
       onUpdate();
       return;
@@ -325,7 +325,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   };
 
   const updateTaskMeta = async (taskId, field, value) => {
-    if (isSharedView) {
+    if (isSharedView && currentUserRole !== 'editor') {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, [field]: value } : t));
       onUpdate();
       return;
@@ -335,7 +335,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   };
 
   const saveTaskNotes = async (taskId, text) => {
-    if (isSharedView) {
+    if (isSharedView && currentUserRole !== 'editor') {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: text } : t));
       return;
     }

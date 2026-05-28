@@ -743,7 +743,7 @@ router.post('/', async (req, res, next) => {
   // ── task_toggle ──
   if (action === 'task_toggle') {
     const { projectId, taskId } = req.body;
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) { task.done = !task.done; task.finishedAt = task.done ? new Date() : null; }
@@ -756,7 +756,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_task') {
     const { projectId, text } = req.body;
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const newId = 'task_' + uid();
     proj.tasks.push({ id: newId, text: text.trim(), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
@@ -769,7 +769,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'rename_task') {
     const { projectId, taskId, text } = req.body;
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) task.text = text.trim();
@@ -781,7 +781,7 @@ router.post('/', async (req, res, next) => {
   // ── update_task_meta ──
   if (action === 'update_task_meta') {
     const { projectId, taskId, deadline, assignee, assignees, priority, comments } = req.body;
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     let prevAssignees = [];
@@ -822,7 +822,7 @@ router.post('/', async (req, res, next) => {
   // ── delete_task ──
   if (action === 'delete_task') {
     const { projectId, taskId } = req.body;
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const tIdx = proj.tasks.findIndex(t => t.id === taskId);
     if (tIdx > -1) {
@@ -838,7 +838,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'restore_task') {
     const { projectId, task } = req.body;
     if (!task?.id || !task?.text) { res.status(400).json({ error: 'Invalid task' }); return; }
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const safeTask = {
       id: String(task.id),
@@ -876,7 +876,7 @@ router.post('/', async (req, res, next) => {
   // ── save_task_notes ──
   if (action === 'save_task_notes') {
     const { projectId, taskId, notes = '' } = req.body;
-    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $set: { 'tasks.$.notes': notes } });
+    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.notes': notes } });
     res.json({ ok: true });
     return;
   }
@@ -884,7 +884,7 @@ router.post('/', async (req, res, next) => {
   // ── save_task_rich_notes ──
   if (action === 'save_task_rich_notes') {
     const { projectId, taskId, notes = '' } = req.body;
-    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $set: { 'tasks.$.richNotes': notes } });
+    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.richNotes': notes } });
     res.json({ ok: true });
     return;
   }
@@ -1077,24 +1077,24 @@ router.post('/', async (req, res, next) => {
     if (!notif) { res.status(404).json({ error: 'Invite not found or already handled' }); return; }
     notif.status = accept ? 'accepted' : 'denied';
     await notif.save();
+    const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
     if (accept) {
-      const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
       const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role: notif.meta.role, avatarUrl: me.avatarUrl || '' };
       if (notif.meta.entityType === 'project') {
         await Project.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
       } else {
         await Space.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
       }
-      // Notify the inviter that their invite was accepted
-      if (notif.fromUserId) {
-        await Notification.create({
-          id: 'notif_' + uid(), toUserId: notif.fromUserId, fromUserId: userId,
-          fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
-          type: 'invite_response',
-          meta: { entityId: notif.meta.entityId, entityType: notif.meta.entityType, entityTitle: notif.meta.entityTitle, role: notif.meta.role },
-          status: 'pending',
-        });
-      }
+    }
+    // Notify the inviter of the response (accept or deny)
+    if (notif.fromUserId) {
+      await Notification.create({
+        id: 'notif_' + uid(), toUserId: notif.fromUserId, fromUserId: userId,
+        fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
+        type: 'invite_response',
+        meta: { entityId: notif.meta.entityId, entityType: notif.meta.entityType, entityTitle: notif.meta.entityTitle, role: notif.meta.role, accepted: accept },
+        status: 'pending',
+      });
     }
     res.json({ ok: true, accepted: accept });
     return;

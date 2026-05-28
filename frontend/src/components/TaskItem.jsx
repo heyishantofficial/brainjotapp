@@ -43,6 +43,7 @@ export default function TaskItem({
   const lastServerRichNotes = useRef(null);
   const assigneeDropdownRef = useRef(null);
   const chatThreadRef = useRef(null);
+  const taskRef = useRef(null);
 
   const fileCount = (task.files || []).length;
   const hasNotes = (task.notes || '').trim().length > 0 || (task.richNotes || '').trim().length > 0;
@@ -90,6 +91,14 @@ export default function TaskItem({
       chatThreadRef.current.scrollTop = chatThreadRef.current.scrollHeight;
     }
   }, [localComments, isOpen]);
+
+  // Auto-open discussion and scroll into view when this task is highlighted via notification
+  useEffect(() => {
+    if (highlighted) {
+      setIsOpen(true);
+      setTimeout(() => taskRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    }
+  }, [highlighted]);
 
   const priorityMeta = PRIORITIES[task.priority] || null;
   const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
@@ -227,11 +236,12 @@ export default function TaskItem({
   };
 
   return (
-    <div 
+    <div
+      ref={taskRef}
       className={`task-item ${highlighted ? 'highlighted' : ''}`}
-      style={{ 
-        '--hover-glow': project.color ? `${project.color}66` : 'rgba(255, 255, 255, 0.12)', 
-        '--hover-shadow': project.color ? `${project.color}22` : 'rgba(0,0,0,0.12)' 
+      style={{
+        '--hover-glow': project.color ? `${project.color}66` : 'rgba(255, 255, 255, 0.12)',
+        '--hover-shadow': project.color ? `${project.color}22` : 'rgba(0,0,0,0.12)'
       }}
     >
       <div className="task-row" onClick={() => !isEditing && setIsOpen(!isOpen)}>

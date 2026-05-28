@@ -67,12 +67,12 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
-  // Poll notifications every 20 s while logged in
+  // Poll notifications and app data every 20 s while logged in
   useEffect(() => {
     if (!loggedIn) return;
-    const id = setInterval(loadNotifications, 20000);
+    const id = setInterval(() => { loadNotifications(); loadData(); }, 20000);
     return () => clearInterval(id);
-  }, [loggedIn, loadNotifications]);
+  }, [loggedIn, loadNotifications, loadData]);
 
   const appDataRef = useRef({ projects: [] });
 
@@ -396,6 +396,7 @@ export default function App() {
                 onBack={() => setCurrentSharedProjectId(null)}
                 onUpdate={loadData}
                 onToast={toast}
+                highlightedTaskId={highlightedTaskId}
                 onOpenWordpad={() => {}}
                 onOpenCollab={() => {}}
                 onOpenLightbox={(url) => setLightboxUrl(url)}

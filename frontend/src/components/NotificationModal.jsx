@@ -28,7 +28,7 @@ function NotifRow({ notif, onRespond, onNavigate }) {
   const isPending = notif.status === 'pending';
   const canNavigate = !!(notif.meta?.entityId && notif.meta?.entityType);
 
-  const icon = isInvite ? '👥' : isMention || isTaskComment ? '💬' : isAssigned ? '📋' : isInviteResponse ? '✅' : '🔔';
+  const icon = isInvite ? '👥' : isMention || isTaskComment ? '💬' : isAssigned ? '📋' : isInviteResponse ? (notif.meta?.accepted === false ? '❌' : '✅') : '🔔';
 
   let bodyText;
   if (isInvite) {
@@ -60,11 +60,13 @@ function NotifRow({ notif, onRespond, onNavigate }) {
       </>
     );
   } else if (isInviteResponse) {
+    const wasAccepted = notif.meta?.accepted !== false;
     bodyText = (
       <>
-        <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span> accepted your invite to{' '}
+        <span style={{ fontWeight: '800' }}>@{notif.fromUsername}</span>{' '}
+        {wasAccepted ? 'accepted' : 'declined'} your invite to{' '}
         <span style={{ fontWeight: '800' }}>{notif.meta?.entityTitle}</span>
-        {notif.meta?.role && (
+        {wasAccepted && notif.meta?.role && (
           <span style={{ fontSize: '12px', color: 'var(--muted)' }}> as {notif.meta.role}</span>
         )}
       </>
