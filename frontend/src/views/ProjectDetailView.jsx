@@ -51,6 +51,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [hideCompleted, setHideCompleted] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [sortBy, setSortBy] = useState('default');
+  const [labelFilter, setLabelFilter] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   // localTasks shadows project.tasks for shared-view optimistic updates
   // (avoids direct prop mutation which violates React immutability)
@@ -82,6 +83,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       if (hideCompleted && t.done) return false;
       const tAssignees = t.assignees || (t.assignee ? [t.assignee] : []);
       if (assigneeFilter !== 'all' && !tAssignees.includes(assigneeFilter)) return false;
+      if (labelFilter && t.badge !== labelFilter) return false;
       return true;
     })
     .sort((a, b) => {
@@ -514,14 +516,14 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               <span className="section-head-title">Tasks</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '11px', color: 'var(--faint)' }}>{project.tasks?.length || 0} total</span>
-                <button 
+                <button
                   onClick={() => setShowFilters(!showFilters)}
-                  style={{ 
-                    background: showFilters ? 'var(--surface3)' : 'transparent', 
-                    border: 'none', 
-                    borderRadius: '6px', 
-                    padding: '4px 8px', 
-                    color: showFilters ? 'var(--text)' : 'var(--faint)',
+                  style={{
+                    background: (showFilters || labelFilter || assigneeFilter !== 'all' || hideCompleted) ? 'var(--surface3)' : 'transparent',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '4px 8px',
+                    color: (showFilters || labelFilter || assigneeFilter !== 'all' || hideCompleted) ? 'var(--text)' : 'var(--faint)',
                     cursor: 'pointer',
                     fontSize: '12px',
                     fontWeight: '600',
@@ -533,6 +535,9 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 >
                   <span style={{ fontSize: '14px' }}>{showFilters ? '✕' : '⌥'}</span>
                   {showFilters ? 'Close' : 'Filter'}
+                  {!showFilters && (labelFilter || assigneeFilter !== 'all' || hideCompleted) && (
+                    <span style={{ background: 'var(--accent)', borderRadius: '50%', width: '6px', height: '6px', display: 'inline-block', marginLeft: '2px' }} />
+                  )}
                 </button>
               </div>
             </div>
@@ -571,6 +576,45 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                         <span style={{ fontWeight: '600' }}>Hide completed</span>
                       </label>
                     </div>
+
+                    {(project.labels || []).length > 0 && (
+                      <div className="filter-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                        <span className="filter-label">Label</span>
+                        <button
+                          onClick={() => setLabelFilter(null)}
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: '20px',
+                            border: '1.5px solid var(--border)',
+                            background: labelFilter === null ? 'var(--surface3)' : 'transparent',
+                            color: labelFilter === null ? 'var(--text)' : 'var(--muted)',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          All
+                        </button>
+                        {(project.labels || []).map(lbl => (
+                          <button
+                            key={lbl.id}
+                            onClick={() => setLabelFilter(labelFilter === lbl.id ? null : lbl.id)}
+                            style={{
+                              padding: '3px 10px',
+                              borderRadius: '20px',
+                              border: `1.5px solid ${lbl.color}`,
+                              background: labelFilter === lbl.id ? lbl.color : 'transparent',
+                              color: labelFilter === lbl.id ? '#fff' : lbl.color,
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {lbl.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}
