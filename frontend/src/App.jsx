@@ -245,6 +245,7 @@ export default function App() {
         onAddProjectToSpace={(spaceId) => { setAddProjectSpaceId(spaceId); setShowAddProject(true); }}
         onShareSpace={(spaceId) => setShowSpaceCollab({ open: true, spaceId })}
         onLogout={handleLogout}
+        currentUser={currentUser}
         onReorder={loadData}
         onOpenSearch={() => setIsCommandPaletteOpen(true)}
         onOpenNotifications={() => setShowNotifications(true)}

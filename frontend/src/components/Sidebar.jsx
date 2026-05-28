@@ -24,6 +24,7 @@ export default function Sidebar({
   onLogout,
   onReorder,
   collapsed,
+  currentUser,
 }) {
   const dragModifierRef = useRef(false);
   const [expandedSpaces,  setExpandedSpaces]  = useState(new Set());
@@ -221,7 +222,7 @@ export default function Sidebar({
       <div className="sb-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div className="logo-text">BrainJot</div>
-          <div className="logo-year">Ishant Chauhan</div>
+          <div className="logo-year">{currentUser?.name || ''}</div>
         </div>
         <button className="nav-item mobile-only" style={{ width: 'auto', padding: '8px', background: 'transparent' }} onClick={() => onSelect(currentProjectId)} title="Close Sidebar">
           <span style={{ fontSize: '18px' }}>✕</span>
