@@ -155,6 +155,25 @@ export default function Sidebar({
     onReorder();
   };
 
+  // ── Drag & drop space reorder ─────────────────────────────────────
+  const handleSpaceDragStart = (e, sid) => { e.dataTransfer.setData('spaceId', sid); e.dataTransfer.effectAllowed = 'move'; };
+  const handleSpaceDragOver  = (e) => { e.preventDefault(); e.currentTarget.classList.add('drop-target'); };
+  const handleSpaceDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
+  const handleSpaceDrop      = async (e, targetSid) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drop-target');
+    const sourceSid = e.dataTransfer.getData('spaceId');
+    if (!sourceSid || sourceSid === targetSid) return;
+    const newOrder = spaces.map(s => s.id);
+    const srcIdx = newOrder.indexOf(sourceSid);
+    const tgtIdx = newOrder.indexOf(targetSid);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+    newOrder.splice(srcIdx, 1);
+    newOrder.splice(tgtIdx, 0, sourceSid);
+    await api('reorder_spaces', { order: newOrder });
+    onReorder();
+  };
+
   return (
     <aside
       className={`sidebar ${sidebarOpen ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}
@@ -196,8 +215,13 @@ export default function Sidebar({
               <div key={space.id} style={{ marginBottom: '4px' }}>
                 {/* Space header row */}
                 <div
-                  style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px' }}
+                  style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px', cursor: 'grab' }}
                   onContextMenu={e => { e.preventDefault(); setSpaceCtxMenu({ open: true, x: e.clientX, y: e.clientY, space }); }}
+                  draggable="true"
+                  onDragStart={e => handleSpaceDragStart(e, space.id)}
+                  onDragOver={handleSpaceDragOver}
+                  onDragLeave={handleSpaceDragLeave}
+                  onDrop={e => handleSpaceDrop(e, space.id)}
                 >
                   <button
                     className={`nav-item ${isSpaceActive ? 'active' : ''}`}
