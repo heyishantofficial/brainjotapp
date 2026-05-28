@@ -25,6 +25,7 @@ export default function Sidebar({
   onReorder,
   collapsed,
   currentUser,
+  onOpenProfile,
 }) {
   const dragModifierRef = useRef(false);
   const [expandedSpaces,  setExpandedSpaces]  = useState(new Set());
@@ -222,7 +223,14 @@ export default function Sidebar({
       <div className="sb-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div className="logo-text">BrainJot</div>
-          <div className="logo-year">{currentUser?.name || ''}</div>
+          <div
+            className="logo-year"
+            onClick={onOpenProfile}
+            title="View profile"
+            style={{ cursor: 'pointer', transition: 'opacity 0.15s' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.6'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+          >{currentUser?.name || ''}</div>
         </div>
         <button className="nav-item mobile-only" style={{ width: 'auto', padding: '8px', background: 'transparent' }} onClick={() => onSelect(currentProjectId)} title="Close Sidebar">
           <span style={{ fontSize: '18px' }}>✕</span>

@@ -20,6 +20,7 @@ import NotificationModal from './components/NotificationModal';
 import FeedbackPanel from './components/FeedbackPanel';
 import InviteLandingView from './views/InviteLandingView';
 import AdminView from './views/AdminView';
+import ProfileView from './views/ProfileView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 
 const MOCK_SHARED_SPACES = [];
@@ -55,6 +56,7 @@ export default function App() {
   const [showSpaceCollab, setShowSpaceCollab] = useState({ open: false, spaceId: '' });
   const [showNotifications, setShowNotifications] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   
   const [notifications, setNotifications] = useState([]);
@@ -246,6 +248,7 @@ export default function App() {
         onShareSpace={(spaceId) => setShowSpaceCollab({ open: true, spaceId })}
         onLogout={handleLogout}
         currentUser={currentUser}
+        onOpenProfile={() => setShowProfile(true)}
         onReorder={loadData}
         onOpenSearch={() => setIsCommandPaletteOpen(true)}
         onOpenNotifications={() => setShowNotifications(true)}
@@ -254,7 +257,15 @@ export default function App() {
       />
 
       <main className={`main ${sidebarCollapsed ? 'expanded' : ''}`}>
-        {activeView === 'dashboard' && (
+        {showProfile && (
+          <ProfileView
+            onBack={() => setShowProfile(false)}
+            currentUser={currentUser}
+            onUserUpdate={(updates) => setCurrentUser(prev => ({ ...prev, ...updates }))}
+            onLogout={handleLogout}
+          />
+        )}
+        {!showProfile && activeView === 'dashboard' && (
           <DashboardView
             spaces={appData.spaces}
             projects={appData.projects}
@@ -271,7 +282,7 @@ export default function App() {
             unreadNotifications={unreadCount}
           />
         )}
-        {activeView === 'space' && currentSpace && (
+        {!showProfile && activeView === 'space' && currentSpace && (
           <SpaceView
             space={currentSpace}
             projects={(appData.projects || []).filter(p => p.spaceId === currentSpaceId)}
@@ -286,7 +297,7 @@ export default function App() {
             unreadNotifications={unreadCount}
           />
         )}
-        {activeView === 'shared-space' && currentSharedSpace && (
+        {!showProfile && activeView === 'shared-space' && currentSharedSpace && (
           <SpaceView
             space={currentSharedSpace}
             projects={[]}
@@ -301,7 +312,7 @@ export default function App() {
             unreadNotifications={unreadCount}
           />
         )}
-        {activeView === 'project' && currentProject && (
+        {!showProfile && activeView === 'project' && currentProject && (
           <AnimatePresence mode="wait">
             <motion.div
               key={currentProjectId}
@@ -328,7 +339,7 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         )}
-        {activeView === 'shared' && currentSharedProject && (
+        {!showProfile && activeView === 'shared' && currentSharedProject && (
           <AnimatePresence mode="wait">
             <motion.div
               key={currentSharedProjectId}
@@ -357,7 +368,7 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         )}
-        {(activeView === 'dashboard' || activeView === 'space' || activeView === 'shared-space') && <QuoteBar />}
+        {!showProfile && (activeView === 'dashboard' || activeView === 'space' || activeView === 'shared-space') && <QuoteBar />}
       </main>
 
       <Toast toast={toastData} onClear={() => setToastData(null)} />

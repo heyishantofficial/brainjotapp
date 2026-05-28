@@ -370,6 +370,89 @@ router.post('/', async (req, res, next) => {
   if (!req.session.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const userId = req.session.userId;
 
+  // ── get_profile_stats ──
+  if (action === 'get_profile_stats') {
+    const user = await User.findOne({ id: userId }).select('name email role createdAt -_id');
+    const [projects, spaces, feedbackCount] = await Promise.all([
+      Project.find({ ownerId: userId }).lean(),
+      Space.find({ ownerId: userId }).lean(),
+      Feedback.countDocuments({ userId }),
+    ]);
+    let taskTotal = 0, taskDone = 0, fileCount = 0;
+    projects.forEach(p => {
+      (p.tasks || []).forEach(t => { taskTotal++; if (t.done) taskDone++; });
+      fileCount += (p.files || []).length;
+    });
+    res.json({
+      user: { name: user.name, email: user.email, role: user.role, createdAt: user.createdAt },
+      stats: {
+        projectCount: projects.length,
+        spaceCount: spaces.length,
+        taskTotal, taskDone,
+        taskOpen: taskTotal - taskDone,
+        completionRate: taskTotal ? Math.round(taskDone / taskTotal * 100) : 0,
+        fileCount, feedbackCount,
+      },
+    });
+    return;
+  }
+
+  // ── update_profile ──
+  if (action === 'update_profile') {
+    const { name, email } = req.body;
+    const updates = {};
+    if (name?.trim()) updates.name = name.trim();
+    if (email?.trim()) {
+      const taken = await User.findOne({ email: email.toLowerCase().trim(), id: { $ne: userId } });
+      if (taken) { res.status(409).json({ error: 'Email already in use' }); return; }
+      updates.email = email.toLowerCase().trim();
+    }
+    if (!Object.keys(updates).length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+    await User.updateOne({ id: userId }, updates);
+    res.json({ ok: true, name: updates.name, email: updates.email });
+    return;
+  }
+
+  // ── change_password ──
+  if (action === 'change_password') {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) { res.status(400).json({ error: 'Both passwords required' }); return; }
+    if (newPassword.length < 8) { res.status(400).json({ error: 'New password must be at least 8 characters' }); return; }
+    const user = await User.findOne({ id: userId });
+    const match = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!match) { res.status(401).json({ error: 'Current password is incorrect' }); return; }
+    await User.updateOne({ id: userId }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── delete_account ──
+  if (action === 'delete_account') {
+    const { password } = req.body;
+    if (!password) { res.status(400).json({ error: 'Password required' }); return; }
+    const user = await User.findOne({ id: userId });
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) { res.status(401).json({ error: 'Incorrect password' }); return; }
+    await Promise.all([
+      User.deleteOne({ id: userId }),
+      Project.deleteMany({ ownerId: userId }),
+      Space.deleteMany({ ownerId: userId }),
+      Feedback.deleteMany({ userId }),
+    ]);
+    req.session.destroy(() => res.json({ ok: true }));
+    return;
+  }
+
+  // ── export_data ──
+  if (action === 'export_data') {
+    const [projects, spaces] = await Promise.all([
+      Project.find({ ownerId: userId }).select('-_id -__v').lean(),
+      Space.find({ ownerId: userId }).select('-_id -__v').lean(),
+    ]);
+    res.json({ spaces, projects, exportedAt: new Date().toISOString() });
+    return;
+  }
+
   // ── post_feedback ──
   if (action === 'post_feedback') {
     const { message, type = 'general' } = req.body;
