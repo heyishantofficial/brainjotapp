@@ -17,10 +17,11 @@ function fmt(d) {
 
 function StatCard({ label, value, sub, color }) {
   return (
-    <div className="stat-card" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+    <div className="stat-card" style={{ display: 'flex', flexDirection: 'column' }}>
       <div className="stat-label">{label}</div>
-      <div className="stat-value" style={{ color }}>{value ?? '—'}</div>
-      {sub && <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{sub}</div>}
+      <div className="stat-value" style={{ color, marginTop: '6px' }}>{value ?? '—'}</div>
+      <div style={{ flex: 1 }} />
+      {sub && <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>{sub}</div>}
     </div>
   );
 }
@@ -189,12 +190,12 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
 
         {/* ── Stats ── */}
         <Section title="Your Stats">
-          <div className="stats-row" style={{ marginBottom: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', alignItems: 'stretch' }}>
             <StatCard label="PROJECTS"   value={stats.projectCount}   color="var(--accent)" />
             <StatCard label="SPACES"     value={stats.spaceCount}     color="var(--text)" />
-            <StatCard label="TASKS DONE" value={stats.taskDone}       color="#10b981" sub={`of ${stats.taskTotal} total`} />
-            <StatCard label="COMPLETION" value={`${stats.completionRate}%`} color={stats.completionRate >= 60 ? '#10b981' : stats.completionRate >= 30 ? '#f59e0b' : '#ef4444'} />
             <StatCard label="FILES"      value={stats.fileCount}      color="#3b82f6" />
+            <StatCard label="TASKS DONE" value={stats.taskDone}       color="#10b981" sub={stats.taskTotal != null ? `of ${stats.taskTotal} total` : null} />
+            <StatCard label="COMPLETION" value={stats.taskTotal != null ? `${stats.completionRate}%` : '—'} color={stats.completionRate >= 60 ? '#10b981' : stats.completionRate >= 30 ? '#f59e0b' : '#ef4444'} />
             <StatCard label="FEEDBACK"   value={stats.feedbackCount}  color="#ec4899" />
           </div>
         </Section>
