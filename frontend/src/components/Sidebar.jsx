@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import DialogModal from './DialogModal';
 import ProjectModal from './ProjectModal';
@@ -25,6 +25,7 @@ export default function Sidebar({
   onReorder,
   collapsed,
 }) {
+  const dragModifierRef = useRef(false);
   const [expandedSpaces,  setExpandedSpaces]  = useState(new Set());
   const [contextMenu,     setContextMenu]     = useState({ open: false, x: 0, y: 0, project: null });
   const [spaceCtxMenu,    setSpaceCtxMenu]    = useState({ open: false, x: 0, y: 0, space: null });
@@ -175,7 +176,12 @@ export default function Sidebar({
     e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
     requestAnimationFrame(() => document.body.removeChild(pill));
   };
-  const handleSpaceDragOver  = (e) => { e.preventDefault(); e.currentTarget.classList.add('drop-target'); };
+  const handleSpaceDragOver  = (e) => {
+    e.preventDefault();
+    dragModifierRef.current = e.ctrlKey || e.metaKey;
+    e.dataTransfer.dropEffect = dragModifierRef.current ? 'move' : 'copy';
+    e.currentTarget.classList.add('drop-target');
+  };
   const handleSpaceDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
   const handleSpaceDrop      = async (e, targetSid) => {
     e.preventDefault();
@@ -197,7 +203,7 @@ export default function Sidebar({
       // Copy or move project to this space
       const sourceProject = projects.find(p => p.id === sourcePid);
       if (!sourceProject || sourceProject.spaceId === targetSid) return;
-      const isMove = e.ctrlKey || e.metaKey;
+      const isMove = dragModifierRef.current;
       await api(isMove ? 'move_project' : 'copy_project', { projectId: sourcePid, spaceId: targetSid });
       // Auto-expand the target space so user sees the result
       setExpandedSpaces(prev => new Set([...prev, targetSid]));
