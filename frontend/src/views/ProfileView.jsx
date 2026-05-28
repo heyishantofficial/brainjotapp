@@ -68,8 +68,8 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const [loading,     setLoading]     = useState(true);
 
   // edit profile
-  const [editName,  setEditName]  = useState('');
-  const [editEmail, setEditEmail] = useState('');
+  const [editName,  setEditName]  = useState(currentUser?.name  || '');
+  const [editEmail, setEditEmail] = useState(currentUser?.email || '');
   const [editMsg,   setEditMsg]   = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
@@ -87,7 +87,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const [deleteMsg,   setDeleteMsg]   = useState('');
 
   useEffect(() => {
-    api('get_profile_stats', null, 'GET').then(r => {
+    api('get_profile_stats').then(r => {
       if (r?.user) {
         setProfileData(r);
         setEditName(r.user.name);
@@ -130,7 +130,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   };
 
   const handleExport = async () => {
-    const data = await api('export_data', null, 'GET');
+    const data = await api('export_data');
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
