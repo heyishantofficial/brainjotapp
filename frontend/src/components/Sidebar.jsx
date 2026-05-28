@@ -138,7 +138,16 @@ export default function Sidebar({
   };
 
   // ── Drag & drop project reorder ───────────────────────────────────
-  const handleDragStart = (e, pid) => { e.dataTransfer.setData('projectId', pid); };
+  const handleDragStart = (e, pid, title, color) => {
+    e.dataTransfer.setData('projectId', pid);
+    e.dataTransfer.effectAllowed = 'copyMove';
+    const pill = document.createElement('div');
+    pill.style.cssText = 'position:fixed;left:-9999px;top:0;display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#f5f5f5;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.15);box-shadow:0 4px 16px rgba(0,0,0,0.5);white-space:nowrap';
+    pill.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0"></span><span>${title}</span><span style="font-size:10px;color:#666;margin-left:4px">⌘ move · drag copy</span>`;
+    document.body.appendChild(pill);
+    e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
+    requestAnimationFrame(() => document.body.removeChild(pill));
+  };
   const handleDragOver  = (e) => { e.preventDefault(); e.currentTarget.classList.add('drop-target'); };
   const handleDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
   const handleDrop      = async (e, targetPid) => {
@@ -172,15 +181,28 @@ export default function Sidebar({
     e.preventDefault();
     e.currentTarget.classList.remove('drop-target');
     const sourceSid = e.dataTransfer.getData('spaceId');
-    if (!sourceSid || sourceSid === targetSid) return;
-    const newOrder = spaces.map(s => s.id);
-    const srcIdx = newOrder.indexOf(sourceSid);
-    const tgtIdx = newOrder.indexOf(targetSid);
-    if (srcIdx === -1 || tgtIdx === -1) return;
-    newOrder.splice(srcIdx, 1);
-    newOrder.splice(tgtIdx, 0, sourceSid);
-    await api('reorder_spaces', { order: newOrder });
-    onReorder();
+    const sourcePid = e.dataTransfer.getData('projectId');
+
+    if (sourceSid && sourceSid !== targetSid) {
+      // Reorder spaces
+      const newOrder = spaces.map(s => s.id);
+      const srcIdx = newOrder.indexOf(sourceSid);
+      const tgtIdx = newOrder.indexOf(targetSid);
+      if (srcIdx === -1 || tgtIdx === -1) return;
+      newOrder.splice(srcIdx, 1);
+      newOrder.splice(tgtIdx, 0, sourceSid);
+      await api('reorder_spaces', { order: newOrder });
+      onReorder();
+    } else if (sourcePid) {
+      // Copy or move project to this space
+      const sourceProject = projects.find(p => p.id === sourcePid);
+      if (!sourceProject || sourceProject.spaceId === targetSid) return;
+      const isMove = e.ctrlKey || e.metaKey;
+      await api(isMove ? 'move_project' : 'copy_project', { projectId: sourcePid, spaceId: targetSid });
+      // Auto-expand the target space so user sees the result
+      setExpandedSpaces(prev => new Set([...prev, targetSid]));
+      onReorder();
+    }
   };
 
   return (
@@ -264,7 +286,7 @@ export default function Sidebar({
                     onClick={() => onSelect(p.id)}
                     onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
                     draggable="true"
-                    onDragStart={e => handleDragStart(e, p.id)}
+                    onDragStart={e => handleDragStart(e, p.id, p.title, p.color)}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={e => handleDrop(e, p.id)}

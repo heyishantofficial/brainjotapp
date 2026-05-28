@@ -389,6 +389,43 @@ router.post('/', async (req, res, next) => {
     return;
   }
 
+  // ── copy_project (cross-space copy) ──
+  if (action === 'copy_project') {
+    const { projectId, spaceId: targetSpaceId } = req.body;
+    if (!projectId || !targetSpaceId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const source = await Project.findOne({ id: projectId, ownerId: userId }).lean();
+    if (!source) { res.status(404).json({ error: 'Project not found' }); return; }
+    const space = await Space.findOne({ id: targetSpaceId, ownerId: userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    const { _id, __v, id, ...rest } = source;
+    const newId = 'proj_' + uid();
+    await Project.create({
+      ...rest,
+      id: newId,
+      spaceId: targetSpaceId,
+      title: (rest.title || 'Project') + ' (Copy)',
+      ownerId: userId,
+      files: [],
+      tasks: (rest.tasks || []).map(cloneTaskForDuplicate),
+    });
+    res.json({ ok: true, id: newId });
+    return;
+  }
+
+  // ── move_project (cross-space move) ──
+  if (action === 'move_project') {
+    const { projectId, spaceId: targetSpaceId } = req.body;
+    if (!projectId || !targetSpaceId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const space = await Space.findOne({ id: targetSpaceId, ownerId: userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    proj.spaceId = targetSpaceId;
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
   // ── delete_project ──
   if (action === 'delete_project') {
     const { projectId } = req.body;
