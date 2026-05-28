@@ -233,4 +233,144 @@ router.get('/system', async (req, res) => {
   }
 });
 
+// ── Analytics (charts + distributions) ──
+function fillDays(raw, days) {
+  const map = Object.fromEntries(raw.map(d => [d._id, d.count]));
+  const result = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    result.push({ date: d.toISOString().split('T')[0], count: map[d.toISOString().split('T')[0]] || 0 });
+  }
+  return result;
+}
+
+router.get('/analytics', async (req, res) => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const nowStr = new Date().toISOString();
+    const db = mongoose.connection.db;
+
+    const [
+      userGrowthRaw,
+      feedbackTrendRaw,
+      taskAgg,
+      projectCountsAgg,
+      taskCountsAgg,
+      fileAgg,
+      spaceProjectAgg,
+      recentSignups,
+      sessionCount,
+      dbStats,
+    ] = await Promise.all([
+      User.aggregate([
+        { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Feedback.aggregate([
+        { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Project.aggregate([
+        { $unwind: { path: '$tasks', preserveNullAndEmptyArrays: false } },
+        { $group: {
+          _id: null,
+          total:     { $sum: 1 },
+          done:      { $sum: { $cond: ['$tasks.done', 1, 0] } },
+          urgent:    { $sum: { $cond: [{ $eq: ['$tasks.priority', 'urgent'] }, 1, 0] } },
+          important: { $sum: { $cond: [{ $eq: ['$tasks.priority', 'important'] }, 1, 0] } },
+          later:     { $sum: { $cond: [{ $eq: ['$tasks.priority', 'later'] }, 1, 0] } },
+          overdue:   { $sum: { $cond: [{ $and: [
+            { $eq: ['$tasks.done', false] },
+            { $gt: ['$tasks.deadline', ''] },
+            { $lt: ['$tasks.deadline', nowStr] },
+          ]}, 1, 0] } },
+        }},
+      ]),
+      Project.aggregate([
+        { $group: { _id: '$ownerId', projectCount: { $sum: 1 } } },
+        { $sort: { projectCount: -1 } },
+        { $limit: 10 },
+      ]),
+      Project.aggregate([
+        { $project: { ownerId: 1, taskCount: { $size: { $ifNull: ['$tasks', []] } } } },
+        { $group: { _id: '$ownerId', taskCount: { $sum: '$taskCount' } } },
+      ]),
+      Project.aggregate([
+        { $project: { fileCount: { $size: { $ifNull: ['$files', []] } } } },
+        { $group: { _id: null, total: { $sum: '$fileCount' } } },
+      ]),
+      Project.aggregate([
+        { $group: { _id: '$spaceId', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+      User.find({}).sort({ createdAt: -1 }).limit(6).select('id name email role createdAt -_id').lean(),
+      db.collection('sessions').countDocuments({ expires: { $gt: new Date() } }),
+      db.stats(),
+    ]);
+
+    // Top users — join project + task counts
+    const taskCountMap = Object.fromEntries(taskCountsAgg.map(t => [t._id, t.taskCount]));
+    const topUserIds   = projectCountsAgg.map(p => p._id);
+    const topUserDocs  = await User.find({ id: { $in: topUserIds } }).select('id name email -_id').lean();
+    const topUserMap   = Object.fromEntries(topUserDocs.map(u => [u.id, u]));
+    const topUsers     = projectCountsAgg
+      .map(p => ({ ...topUserMap[p._id], projectCount: p.projectCount, taskCount: taskCountMap[p._id] || 0 }))
+      .filter(u => u.name);
+
+    // Space distribution — join space titles
+    const spaceIds  = spaceProjectAgg.map(s => s._id).filter(Boolean);
+    const spaceDocs = await Space.find({ id: { $in: spaceIds } }).select('id title -_id').lean();
+    const spaceMap  = Object.fromEntries(spaceDocs.map(s => [s.id, s]));
+    const spaceDistribution = spaceProjectAgg.map(s => ({
+      title: spaceMap[s._id]?.title || 'Unnamed',
+      count: s.count,
+    }));
+
+    // Overall counts
+    const [userCount, projectCount, archivedCount, feedbackOpen, feedbackTotal] = await Promise.all([
+      User.countDocuments(),
+      Project.countDocuments(),
+      Project.countDocuments({ archived: true }),
+      Feedback.countDocuments({ status: 'open' }),
+      Feedback.countDocuments(),
+    ]);
+
+    const ts = taskAgg[0] || { total: 0, done: 0, urgent: 0, important: 0, later: 0, overdue: 0 };
+
+    res.json({
+      counts: {
+        users:           userCount,
+        projects:        projectCount,
+        archivedProjects:archivedCount,
+        tasks:           ts.total,
+        tasksDone:       ts.done,
+        tasksOpen:       ts.total - ts.done,
+        tasksOverdue:    ts.overdue,
+        files:           fileAgg[0]?.total || 0,
+        feedbackOpen,
+        feedbackTotal,
+        activeSessions:  sessionCount,
+        dbSizeMB:        (dbStats.dataSize / 1024 / 1024).toFixed(2),
+      },
+      taskPriority: {
+        urgent:    ts.urgent,
+        important: ts.important,
+        later:     ts.later,
+        none:      Math.max(0, ts.total - ts.urgent - ts.important - ts.later),
+      },
+      completionRate: ts.total ? Math.round(ts.done / ts.total * 100) : 0,
+      userGrowth:      fillDays(userGrowthRaw, 30),
+      feedbackTrend:   fillDays(feedbackTrendRaw, 30),
+      topUsers,
+      spaceDistribution,
+      recentSignups,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
