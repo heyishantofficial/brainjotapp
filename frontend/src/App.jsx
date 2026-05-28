@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { io as socketIO } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from './api';
 import LoginScreen from './components/LoginScreen';
@@ -68,6 +69,8 @@ export default function App() {
   }, []);
 
   const appDataRef = useRef({ projects: [] });
+  const socketRef = useRef(null);
+  const currentRoomRef = useRef(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -92,6 +95,34 @@ export default function App() {
     const id = setInterval(() => { loadNotifications(); loadData(); }, 20000);
     return () => clearInterval(id);
   }, [loggedIn, loadNotifications, loadData]);
+
+  // Real-time socket connection
+  useEffect(() => {
+    if (!loggedIn) {
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+      return;
+    }
+    const socket = socketIO({ withCredentials: true });
+    socketRef.current = socket;
+    socket.on('connect', () => {
+      if (currentRoomRef.current) socket.emit('join_room', currentRoomRef.current);
+    });
+    socket.on('project_updated', () => { loadData(); });
+    return () => { socket.disconnect(); socketRef.current = null; };
+  }, [loggedIn, loadData]);
+
+  // Join/leave project room when active project changes
+  const activeProjectId = currentProjectId || currentSharedProjectId;
+  useEffect(() => {
+    const newRoom = activeProjectId ? `project:${activeProjectId}` : null;
+    const prevRoom = currentRoomRef.current;
+    if (prevRoom !== newRoom) {
+      if (prevRoom) socketRef.current?.emit('leave_room', prevRoom);
+      if (newRoom) socketRef.current?.emit('join_room', newRoom);
+      currentRoomRef.current = newRoom;
+    }
+  }, [activeProjectId]);
 
   const checkAuth = useCallback(async () => {
     try {

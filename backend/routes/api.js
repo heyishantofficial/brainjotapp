@@ -16,6 +16,10 @@ const Notification = require('../models/Notification');
 
 const router = express.Router();
 
+function emitProjectUpdate(req, projectId) {
+  req.app.get('io')?.to(`project:${projectId}`).emit('project_updated', { projectId });
+}
+
 const APP_URL = process.env.APP_URL || 'https://brainjotapp.up.railway.app';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
@@ -748,6 +752,7 @@ router.post('/', async (req, res, next) => {
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) { task.done = !task.done; task.finishedAt = task.done ? new Date() : null; }
     await proj.save();
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -761,6 +766,7 @@ router.post('/', async (req, res, next) => {
     const newId = 'task_' + uid();
     proj.tasks.push({ id: newId, text: text.trim(), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
     await proj.save();
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true, id: newId });
     return;
   }
@@ -774,6 +780,7 @@ router.post('/', async (req, res, next) => {
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) task.text = text.trim();
     await proj.save();
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -815,6 +822,7 @@ router.post('/', async (req, res, next) => {
         if (notifDocs.length) await Notification.insertMany(notifDocs);
       }
     }
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -830,6 +838,7 @@ router.post('/', async (req, res, next) => {
       proj.tasks.splice(tIdx, 1);
       await proj.save();
     }
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -853,6 +862,7 @@ router.post('/', async (req, res, next) => {
     };
     proj.tasks.push(safeTask);
     await proj.save();
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -877,6 +887,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'save_task_notes') {
     const { projectId, taskId, notes = '' } = req.body;
     await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.notes': notes } });
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -885,6 +896,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'save_task_rich_notes') {
     const { projectId, taskId, notes = '' } = req.body;
     await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.richNotes': notes } });
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
@@ -1215,6 +1227,7 @@ router.post('/', async (req, res, next) => {
         meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) } });
     }
     if (allNotifs.length) await Notification.insertMany(allNotifs);
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true, comment });
     return;
   }

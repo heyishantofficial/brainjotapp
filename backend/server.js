@@ -1,5 +1,7 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
+const { Server } = require('socket.io');
 const session = require('express-session');
 const { MongoStore } = require('connect-mongo');
 const cors = require('cors');
@@ -10,8 +12,6 @@ const mongoose = require('mongoose');
 const apiRouter = require('./routes/api');
 const adminRouter = require('./routes/admin');
 
-const app = express();
-app.set('trust proxy', 1); // Railway sits behind a proxy
 const PORT = process.env.PORT || 3001;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'secret';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/brainjot';
@@ -19,6 +19,14 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/brainj
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: ALLOWED_ORIGINS, credentials: true }
+});
+app.set('io', io);
+app.set('trust proxy', 1); // Railway sits behind a proxy
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -54,11 +62,20 @@ if (fs.existsSync(FRONTEND_DIST)) {
   app.get('/{*path}', (_req, res) => res.sendFile(path.join(FRONTEND_DIST, 'index.html')));
 }
 
+io.on('connection', (socket) => {
+  socket.on('join_room', (room) => {
+    if (typeof room === 'string' && /^(project|space):[a-zA-Z0-9_]+$/.test(room)) {
+      socket.join(room);
+    }
+  });
+  socket.on('leave_room', (room) => socket.leave(room));
+});
+
 async function boot() {
   await mongoose.connect(MONGODB_URI);
   console.log('MongoDB connected');
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Backend running at http://localhost:${PORT}`);
   });
 }
