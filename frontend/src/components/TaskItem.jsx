@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { api, apiForm } from '../api';
 import DOMPurify from 'dompurify';
 import MentionInput from './MentionInput';
+import Avatar from './Avatar';
 
 const PRIORITIES = {
   urgent: { icon: '🔥', label: 'Urgent' },
@@ -287,23 +288,23 @@ export default function TaskItem({
         {!isEditing && assignees.length > 0 && (
           <div style={{ display: 'flex', marginLeft: 'auto', marginRight: '8px' }}>
             {assignees.map((aid, idx) => {
-              const name = aid === 'me' ? 'Me' : (project.collaborators || []).find(c => c.id === aid)?.name || 'Guest';
+              const collab = (project.collaborators || []).find(c => c.id === aid);
+              const name = aid === 'me' ? (currentUser?.name || 'Me') : collab?.name || 'Guest';
+              const src = aid === 'me' ? (currentUser?.avatarUrl || '') : (collab?.avatarUrl || '');
               return (
-                <div 
+                <div
                   key={aid}
-                  className="task-assignee-avatar has-tooltip" 
-                  style={{ 
-                    background: getAvatarColor(name), 
+                  className="has-tooltip"
+                  style={{
                     marginLeft: idx === 0 ? '0' : '-8px',
                     border: '2px solid var(--surface)',
+                    borderRadius: '50%',
                     position: 'relative',
-                    zIndex: assignees.length - idx
+                    zIndex: assignees.length - idx,
                   }}
                 >
-                  <div className="tooltip-content" style={{ bottom: '130%', minWidth: '80px' }}>
-                    {name}
-                  </div>
-                  {getInitials(name)}
+                  <div className="tooltip-content" style={{ bottom: '130%', minWidth: '80px' }}>{name}</div>
+                  <Avatar name={name} src={src} size={24} />
                 </div>
               );
             })}
@@ -500,14 +501,12 @@ export default function TaskItem({
                     alignItems: 'flex-end', gap: '7px',
                   }}>
                     {!isMine && (
-                      <div style={{
-                        width: '28px', height: '28px', borderRadius: '50%',
-                        background: getAvatarColor(displayName), color: '#fff',
-                        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '10px', fontWeight: '800', marginBottom: '2px',
-                      }}>
-                        {getInitials(displayName).slice(0, 2)}
-                      </div>
+                      <Avatar
+                        name={displayName}
+                        src={msg.avatarUrl}
+                        size={28}
+                        style={{ marginBottom: '2px' }}
+                      />
                     )}
                     <div style={{
                       maxWidth: '72%',

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import Avatar from './Avatar';
 
 const ROLE_LABELS = {
   editor:    { label: 'Editor',    desc: 'Can add, edit & complete tasks in all projects', icon: '✏️', color: '#6366f1' },
@@ -158,9 +159,7 @@ export default function SpaceCollabModal({ spaceId, space, onClose, onUpdate, on
                 <div key={c.id} className="collab-member-row">
                   {/* Avatar with presence dot */}
                   <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <div className="collab-member-avatar" style={{ background: hashColor(c.name || c.id) }}>
-                      {initials(c.name)}
-                    </div>
+                    <Avatar name={c.name} src={c.avatarUrl} size={40} style={{ border: '2px solid var(--border)' }} />
                     {c.id === collabs[0]?.id && (
                       <div className="presence-dot online" title="Online now" />
                     )}
@@ -232,7 +231,7 @@ export default function SpaceCollabModal({ spaceId, space, onClose, onUpdate, on
                       onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     >
-                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: hashColor(u.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '800', flexShrink: 0 }}>{initials(u.name)}</div>
+                      <Avatar name={u.name} src={u.avatarUrl} size={32} />
                       <div>
                         <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text)' }}>{u.name}</div>
                         <div style={{ fontSize: '11px', color: 'var(--accent)' }}>@{u.username}</div>
@@ -245,7 +244,7 @@ export default function SpaceCollabModal({ spaceId, space, onClose, onUpdate, on
 
             {selectedUser && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'var(--surface2)', borderRadius: '12px', marginBottom: '12px', border: '1px solid var(--border)' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: hashColor(selectedUser.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '800' }}>{initials(selectedUser.name)}</div>
+                <Avatar name={selectedUser.name} src={selectedUser.avatarUrl} size={36} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: '14px', fontWeight: '700' }}>{selectedUser.name}</div>
                   <div style={{ fontSize: '12px', color: 'var(--accent)' }}>@{selectedUser.username}</div>

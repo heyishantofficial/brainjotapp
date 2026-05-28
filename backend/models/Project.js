@@ -18,6 +18,7 @@ const collaboratorSchema = new mongoose.Schema({
   email: String,
   role: String,
   status: String,
+  avatarUrl: String,
 }, { _id: false });
 
 const taskSchema = new mongoose.Schema({
@@ -37,6 +38,7 @@ const taskSchema = new mongoose.Schema({
     userId: String,
     username: String,
     name: String,
+    avatarUrl: String,
     text: String,
     mentions: [String],
     createdAt: { type: Date, default: Date.now },

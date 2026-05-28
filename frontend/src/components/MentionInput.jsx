@@ -1,11 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-
-function hashColor(str) {
-  const c = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6'];
-  let h = 0;
-  for (let i = 0; i < (str||'').length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return c[Math.abs(h) % c.length];
-}
+import Avatar from './Avatar';
 
 /**
  * MentionInput — textarea that shows a @mention picker when user types @.
@@ -104,9 +98,7 @@ export default function MentionInput({ value, onChange, onSubmit, placeholder, c
               onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
             >
-              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: hashColor(c.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '800', flexShrink: 0 }}>
-                {(c.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-              </div>
+              <Avatar name={c.name} src={c.avatarUrl} size={28} />
               <div>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text)' }}>{c.name}</div>
                 <div style={{ fontSize: '11px', color: 'var(--accent)' }}>@{c.username}</div>

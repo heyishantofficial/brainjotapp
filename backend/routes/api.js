@@ -128,10 +128,28 @@ const upload = multer({
   },
 });
 
+const avatarStorage = useR2
+  ? multerS3({
+      s3,
+      bucket: process.env.R2_BUCKET_NAME,
+      key: (req, _file, cb) => cb(null, `avatars/${req.session.userId}.jpg`),
+    })
+  : multer.diskStorage({
+      destination(_req, _file, cb) {
+        const dir = path.join(UPLOADS_DIR, 'avatars');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (req, _file, cb) => cb(null, `${req.session.userId}.jpg`),
+    });
+const uploadAvatar = multer({ storage: avatarStorage, limits: { fileSize: 2 * 1024 * 1024 } });
+
 function conditionalUpload(req, res, next) {
   const action = req.query.action;
   if (action === 'upload' || action === 'upload_task_file') {
     upload.single('file')(req, res, next);
+  } else if (action === 'upload_avatar') {
+    uploadAvatar.single('file')(req, res, next);
   } else {
     next();
   }
@@ -275,9 +293,9 @@ router.get('/', async (req, res) => {
 
   if (action === 'check') {
     if (req.session.userId) {
-      const user = await User.findOne({ id: req.session.userId }).select('name email username role -_id');
+      const user = await User.findOne({ id: req.session.userId }).select('name email username role avatarUrl -_id');
       if (user) req.session.userRole = user.role || 'user';
-      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user' } : null });
+      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } : null });
     } else {
       res.json({ loggedIn: false });
     }
@@ -292,7 +310,7 @@ router.get('/', async (req, res) => {
     if (q.length < 2) { res.json({ users: [] }); return; }
     const safeQ = q.replace(/[^a-z0-9_]/g, '');
     const users = await User.find({ username: { $regex: '^' + safeQ }, id: { $ne: userId } })
-      .select('id name username -_id').limit(8).lean();
+      .select('id name username avatarUrl -_id').limit(8).lean();
     res.json({ users });
     return;
   }
@@ -387,7 +405,7 @@ router.post('/', async (req, res, next) => {
         await seedDefaultData(userId);
         req.session.userId = userId;
         req.session.userRole = role;
-        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, username: user.username, role } });
+        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, username: user.username, role, avatarUrl: '' } });
       } catch (err) {
         next(err);
       }
@@ -417,7 +435,7 @@ router.post('/', async (req, res, next) => {
         }
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
-        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user' } });
+        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {
         next(err);
       }
@@ -435,7 +453,7 @@ router.post('/', async (req, res, next) => {
 
   // ── get_profile_stats ──
   if (action === 'get_profile_stats') {
-    const user = await User.findOne({ id: userId }).select('name email username role createdAt -_id');
+    const user = await User.findOne({ id: userId }).select('name email username role avatarUrl createdAt -_id');
     const [projects, spaces, feedbackCount] = await Promise.all([
       Project.find({ ownerId: userId }).lean(),
       Space.find({ ownerId: userId }).lean(),
@@ -447,7 +465,7 @@ router.post('/', async (req, res, next) => {
       fileCount += (p.files || []).length;
     });
     res.json({
-      user: { name: user.name, email: user.email, username: user.username || '', role: user.role, createdAt: user.createdAt },
+      user: { name: user.name, email: user.email, username: user.username || '', role: user.role, avatarUrl: user.avatarUrl || '', createdAt: user.createdAt },
       stats: {
         projectCount: projects.length,
         spaceCount: spaces.length,
@@ -473,6 +491,16 @@ router.post('/', async (req, res, next) => {
     if (!Object.keys(updates).length) { res.status(400).json({ error: 'Nothing to update' }); return; }
     await User.updateOne({ id: userId }, updates);
     res.json({ ok: true, name: updates.name, email: updates.email });
+    return;
+  }
+
+  // ── upload_avatar ──
+  if (action === 'upload_avatar') {
+    if (!req.file) { res.status(400).json({ error: 'No file received' }); return; }
+    const key = `avatars/${userId}.jpg`;
+    const avatarUrl = filePublicUrl(key);
+    await User.updateOne({ id: userId }, { avatarUrl });
+    res.json({ ok: true, avatarUrl });
     return;
   }
 
@@ -1007,10 +1035,10 @@ router.post('/', async (req, res, next) => {
     }
     const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
     if (alreadyPending) { res.status(409).json({ error: 'Invite already pending for this user' }); return; }
-    const fromUser = await User.findOne({ id: userId }).select('name username -_id');
+    const fromUser = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
     await Notification.create({
       id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
-      fromUsername: fromUser.username, fromName: fromUser.name,
+      fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
       type: 'collab_invite',
       meta: { entityId, entityType, entityTitle, role },
       status: 'pending',
@@ -1027,8 +1055,8 @@ router.post('/', async (req, res, next) => {
     notif.status = accept ? 'accepted' : 'denied';
     await notif.save();
     if (accept) {
-      const me = await User.findOne({ id: userId }).select('id name username email -_id');
-      const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role: notif.meta.role };
+      const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
+      const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role: notif.meta.role, avatarUrl: me.avatarUrl || '' };
       if (notif.meta.entityType === 'project') {
         await Project.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
       } else {
@@ -1075,14 +1103,14 @@ router.post('/', async (req, res, next) => {
     if (!projectId || !taskId || !text?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { 'collaborators.userId': userId }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
-    const me = await User.findOne({ id: userId }).select('name username -_id');
-    const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, text: text.trim().slice(0, 1000), mentions, createdAt: new Date() };
+    const me = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
+    const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, avatarUrl: me.avatarUrl || '', text: text.trim().slice(0, 1000), mentions, createdAt: new Date() };
     await Project.updateOne({ id: projectId, 'tasks.id': taskId }, { $push: { 'tasks.$.comments': comment } });
     if (mentions.length) {
       const mentionedUsers = await User.find({ username: { $in: mentions } }).select('id -_id').lean();
       const task = proj.tasks.find(t => t.id === taskId);
       const notifDocs = mentionedUsers.filter(u => u.id !== userId).map(u => ({
-        id: 'notif_' + uid(), toUserId: u.id, fromUserId: userId, fromUsername: me.username || '', fromName: me.name,
+        id: 'notif_' + uid(), toUserId: u.id, fromUserId: userId, fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
         type: 'mention',
         meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) },
         status: 'pending',

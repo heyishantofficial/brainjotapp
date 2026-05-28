@@ -1,15 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api } from '../api';
+import { api, apiForm } from '../api';
+import Avatar from '../components/Avatar';
 
-function initials(name) {
-  return (name || '?').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+async function compressAvatar(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 200;
+      const scale = Math.min(MAX / img.width, MAX / img.height, 1);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => resolve(new File([blob], 'avatar.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.78);
+    };
+    img.src = url;
+  });
 }
-function hashColor(str) {
-  const c = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444'];
-  let h = 0;
-  for (let i = 0; i < (str||'').length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return c[Math.abs(h) % c.length];
-}
+
+
 function fmt(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -87,6 +99,8 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const [unameMsg,    setUnameMsg]    = useState('');
   const [unameSaving, setUnameSaving] = useState(false);
   const unameDebounce = useRef(null);
+  const avatarInputRef = useRef(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
 
   // delete account
   const [showDelete,  setShowDelete]  = useState(false);
@@ -135,6 +149,22 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     if (r?.ok) { setPwMsg('✓ Password changed'); setCurPw(''); setNewPw(''); setConfPw(''); }
     else        { setPwMsg(r?.error || 'Something went wrong'); }
     setPwSaving(false);
+  };
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarUploading(true);
+    const compressed = await compressAvatar(file);
+    const fd = new FormData();
+    fd.append('file', compressed);
+    const r = await apiForm('upload_avatar', fd);
+    if (r?.avatarUrl) {
+      setProfileData(prev => ({ ...prev, user: { ...prev.user, avatarUrl: r.avatarUrl } }));
+      onUserUpdate?.({ avatarUrl: r.avatarUrl });
+    }
+    setAvatarUploading(false);
+    e.target.value = '';
   };
 
   const handleUnameChange = (raw) => {
@@ -190,7 +220,6 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
 
   const user  = profileData?.user  || {};
   const stats = profileData?.stats || {};
-  const avatarColor = hashColor(user.name || '');
   const isAdmin = user.role === 'superadmin';
 
   return (
@@ -206,13 +235,22 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
 
         {/* ── Hero ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '40px', marginTop: '8px' }}>
-          <div style={{
-            width: '72px', height: '72px', borderRadius: '50%',
-            background: avatarColor, color: '#fff',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '26px', fontWeight: '900', flexShrink: 0,
-          }}>
-            {initials(user.name)}
+          <div
+            style={{ position: 'relative', cursor: 'pointer', flexShrink: 0 }}
+            onClick={() => avatarInputRef.current?.click()}
+            title="Change profile picture"
+          >
+            <Avatar name={user.name} src={user.avatarUrl} size={72} />
+            <div style={{
+              position: 'absolute', bottom: 0, right: 0,
+              width: '22px', height: '22px', borderRadius: '50%',
+              background: 'var(--accent)', color: '#000',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '11px', border: '2px solid var(--bg)',
+            }}>
+              {avatarUploading ? '…' : '📷'}
+            </div>
+            <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarChange} />
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

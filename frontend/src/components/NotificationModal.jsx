@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from '../api';
+import Avatar from './Avatar';
 
 function timeAgo(date) {
   const s = Math.floor((Date.now() - new Date(date)) / 1000);
@@ -8,22 +9,6 @@ function timeAgo(date) {
   if (s < 3600) return Math.floor(s / 60) + 'm ago';
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
-}
-
-function hashColor(str) {
-  const c = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6'];
-  let h = 0;
-  for (let i = 0; i < (str || '').length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return c[Math.abs(h) % c.length];
-}
-
-function Avatar({ name }) {
-  const initials = (name || '?').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  return (
-    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: hashColor(name || ''), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '800', flexShrink: 0 }}>
-      {initials}
-    </div>
-  );
 }
 
 function NotifRow({ notif, onRespond, onNavigate }) {
@@ -112,7 +97,7 @@ function NotifRow({ notif, onRespond, onNavigate }) {
             </div>
           )}
         </div>
-        <Avatar name={notif.fromName} />
+        <Avatar name={notif.fromName} src={notif.fromAvatarUrl} size={36} />
       </div>
     </div>
   );

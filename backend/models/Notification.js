@@ -3,9 +3,10 @@ const mongoose = require('mongoose');
 const notifSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   toUserId:    { type: String, required: true, index: true },
-  fromUserId:  String,
-  fromUsername: String,
-  fromName:    String,
+  fromUserId:    String,
+  fromUsername:  String,
+  fromName:      String,
+  fromAvatarUrl: String,
   type: { type: String, enum: ['collab_invite', 'mention', 'comment'], required: true },
   meta: {
     entityId:    String,
