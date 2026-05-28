@@ -223,6 +223,11 @@ export default function Sidebar({
                   onDragLeave={handleSpaceDragLeave}
                   onDrop={e => handleSpaceDrop(e, space.id)}
                 >
+                  <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style={{ opacity: 0.25, flexShrink: 0, marginLeft: '6px', color: 'var(--muted)', pointerEvents: 'none' }}>
+                    <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
+                    <circle cx="3" cy="7"   r="1.5"/><circle cx="7" cy="7"   r="1.5"/>
+                    <circle cx="3" cy="11.5" r="1.5"/><circle cx="7" cy="11.5" r="1.5"/>
+                  </svg>
                   <button
                     className={`nav-item ${isSpaceActive ? 'active' : ''}`}
                     onClick={() => handleSpaceNameClick(space)}
