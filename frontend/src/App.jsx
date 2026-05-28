@@ -390,10 +390,11 @@ export default function App() {
         {!showProfile && activeView === 'shared-space' && currentSharedSpace && (
           <SpaceView
             space={currentSharedSpace}
-            projects={[]}
-            onOpenProject={() => {}}
+            projects={(appData.projects || []).filter(p => p.spaceId === currentSharedSpace.id)}
+            onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }}
             onReorder={() => {}}
-            onAddProject={() => {}}
+            onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
+            canAddProject={currentSharedSpace.myRole === 'editor'}
             onOpenCollab={() => {}}
             onEditSpace={() => {}}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}

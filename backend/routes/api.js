@@ -601,6 +601,13 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_project') {
     const { title, subtitle = '', color = '#888785', tag = 'Project', spaceId = '' } = req.body;
     if (!title?.trim()) { res.status(400).json({ error: 'Title required' }); return; }
+    if (spaceId) {
+      const ownedSpace = await Space.findOne({ id: spaceId, ownerId: userId });
+      if (!ownedSpace) {
+        const editorSpace = await Space.findOne({ id: spaceId, collaborators: { $elemMatch: { userId, role: 'editor' } } });
+        if (!editorSpace) { res.status(403).json({ error: 'No editor access to this space' }); return; }
+      }
+    }
     const newId = 'proj_' + uid();
     const count = await Project.countDocuments({ spaceId, ownerId: userId });
     await Project.create({ id: newId, title: title.trim(), subtitle, color, tag, spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: [], __orderRank: count });

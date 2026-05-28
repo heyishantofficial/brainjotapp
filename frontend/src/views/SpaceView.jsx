@@ -20,6 +20,7 @@ export default function SpaceView({
   onOpenProject,
   onReorder,
   onAddProject,
+  canAddProject = true,
   onOpenCollab,
   onEditSpace,
   onOpenSearch,
@@ -248,20 +249,26 @@ export default function SpaceView({
       <div className="view active" style={{ paddingTop: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
           <h2 style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '-0.8px', margin: 0 }}>Projects</h2>
-          <button
-            onClick={onAddProject}
-            style={{ background: space.color, color: '#fff', border: 'none', borderRadius: '12px', padding: '10px 20px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', letterSpacing: '0.3px' }}
-          >+ New Project</button>
+          {canAddProject && (
+            <button
+              onClick={onAddProject}
+              style={{ background: space.color, color: '#fff', border: 'none', borderRadius: '12px', padding: '10px 20px', fontSize: '13px', fontWeight: '800', cursor: 'pointer', letterSpacing: '0.3px' }}
+            >+ New Project</button>
+          )}
         </div>
 
         {activeProjects.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--faint)' }}>
             <div style={{ fontSize: '18px', fontWeight: '700', marginBottom: '8px' }}>No projects yet</div>
-            <div style={{ fontSize: '14px', marginBottom: '24px' }}>Create your first project in this space</div>
-            <button
-              onClick={onAddProject}
-              style={{ background: space.color, color: '#fff', border: 'none', borderRadius: '14px', padding: '12px 28px', fontSize: '14px', fontWeight: '800', cursor: 'pointer' }}
-            >+ New Project</button>
+            <div style={{ fontSize: '14px', marginBottom: '24px' }}>
+              {canAddProject ? 'Create your first project in this space' : 'No projects in this space yet'}
+            </div>
+            {canAddProject && (
+              <button
+                onClick={onAddProject}
+                style={{ background: space.color, color: '#fff', border: 'none', borderRadius: '14px', padding: '12px 28px', fontSize: '14px', fontWeight: '800', cursor: 'pointer' }}
+              >+ New Project</button>
+            )}
           </div>
         ) : (
           <div className="projects-grid" id="proj-grid">
