@@ -5,9 +5,9 @@ const apiInstance = axios.create({
   withCredentials: true,
 });
 
-export async function api(action, body = null, method = 'POST') {
+export async function api(action, body = null, method = 'POST', extraQuery = '') {
   try {
-    const config = { method, url: `?action=${action}` };
+    const config = { method, url: `?action=${action}${extraQuery}` };
     if (body && method !== 'GET') {
       config.data = body;
     }

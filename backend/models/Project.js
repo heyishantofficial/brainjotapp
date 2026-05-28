@@ -12,8 +12,11 @@ const fileSchema = new mongoose.Schema({
 
 const collaboratorSchema = new mongoose.Schema({
   id: String,
+  userId: String,
   name: String,
+  username: String,
   email: String,
+  role: String,
   status: String,
 }, { _id: false });
 
@@ -31,9 +34,12 @@ const taskSchema = new mongoose.Schema({
   priority: { type: String, default: '' },
   comments: [{
     id: String,
-    author: String,
+    userId: String,
+    username: String,
+    name: String,
     text: String,
-    time: String
+    mentions: [String],
+    createdAt: { type: Date, default: Date.now },
   }],
   createdAt: { type: Date, default: Date.now },
   finishedAt: { type: Date, default: null },

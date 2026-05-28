@@ -41,7 +41,7 @@ function CountUp({ value }) {
   return <>{displayValue}</>;
 }
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0 }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [dialogConfig, setDialogConfig] = useState({ open: false, type: '', title: '', message: '', initialValue: '', onConfirm: null });
   const [notesStatus, setNotesStatus] = useState('Saved');
@@ -610,6 +610,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       highlighted={highlightedTaskId === t.id}
                       readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
                       isCommenter={isSharedView && currentUserRole === 'commenter'}
+                      currentUser={currentUser}
+                      collaborators={project.collaborators || []}
                     />
                   </motion.div>
                 ))}
@@ -658,6 +660,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           highlighted={highlightedTaskId === t.id}
                           readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
                           isCommenter={isSharedView && currentUserRole === 'commenter'}
+                          currentUser={currentUser}
+                          collaborators={project.collaborators || []}
                         />
                       </motion.div>
                     ))}

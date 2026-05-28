@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
 /**
@@ -55,26 +55,38 @@ function regenerateInviteLink(projectId) {
 
 export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast }) {
   const [activeTab, setActiveTab] = useState('members');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [role, setRole] = useState('editor');
   const [inviteLink, setInviteLink] = useState(() => getInviteLink(projectId));
   const [linkCopied, setLinkCopied] = useState(false);
   const [changingRoleId, setChangingRoleId] = useState(null);
+  const [inviteMsg, setInviteMsg] = useState('');
+  const debounceRef = useRef(null);
 
   const collabs = project?.collaborators || [];
 
+  useEffect(() => {
+    if (!usernameInput || usernameInput.length < 2) { setSearchResults([]); return; }
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const r = await api('find_user', null, 'GET', `&q=${encodeURIComponent(usernameInput)}`);
+      setSearchResults(r?.users || []);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [usernameInput]);
+
   const submit = async () => {
-    if (!email.trim()) return;
-    // Mock update: update local object immutably
-    if (project && project.collaborators) {
-      project.collaborators.push({ id: 'c' + Date.now(), name: name || email, email, role });
+    if (!selectedUser) { setInviteMsg('Select a user from the search results first'); return; }
+    setInviteMsg('');
+    const r = await api('send_collab_invite', { username: selectedUser.username, entityId: projectId, entityType: 'project', role });
+    if (r?.ok) {
+      setInviteMsg(`✓ Invite sent to @${selectedUser.username}`);
+      setSelectedUser(null); setUsernameInput(''); setSearchResults([]);
+    } else {
+      setInviteMsg(r?.error || 'Something went wrong');
     }
-    await api('invite_collaborator', { projectId, name, email, role });
-    setName(''); setEmail(''); setRole('editor');
-    onUpdate();
-    onToast(`${name || email} invited as ${ROLE_LABELS[role].label}!`);
-    setActiveTab('members');
   };
 
   const removeCollab = async (cid) => {
@@ -225,30 +237,57 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
         {/* ── TAB: INVITE ── */}
         {activeTab === 'invite' && (
           <div style={{ marginTop: '16px' }}>
-            {/* Invite by email */}
             <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
-              Invite by email
+              Invite by @username
             </div>
-            <div className="modal-field">
-              <label>Name</label>
-              <input type="text" placeholder="e.g. Priya Sharma" value={name} onChange={e => setName(e.target.value)} />
+
+            {/* Username search */}
+            <div className="modal-field" style={{ position: 'relative' }}>
+              <label>Search username</label>
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontWeight: '700' }}>@</span>
+                <input
+                  type="text" placeholder="username" style={{ paddingLeft: '26px' }}
+                  value={usernameInput}
+                  onChange={e => { setUsernameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')); setSelectedUser(null); setInviteMsg(''); }}
+                />
+              </div>
+              {searchResults.length > 0 && !selectedUser && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', zIndex: 100, overflow: 'hidden', marginTop: '4px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+                  {searchResults.map(u => (
+                    <button key={u.id} onClick={() => { setSelectedUser(u); setUsernameInput(u.username); setSearchResults([]); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: hashColor(u.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '800', flexShrink: 0 }}>{initials(u.name)}</div>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text)' }}>{u.name}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--accent)' }}>@{u.username}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="modal-field">
-              <label>Email *</label>
-              <input type="email" placeholder="e.g. priya@example.com" value={email} onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && submit()} />
-            </div>
+
+            {selectedUser && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'var(--surface2)', borderRadius: '12px', marginBottom: '12px', border: '1px solid var(--border)' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: hashColor(selectedUser.name), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '800' }}>{initials(selectedUser.name)}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '14px', fontWeight: '700' }}>{selectedUser.name}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--accent)' }}>@{selectedUser.username}</div>
+                </div>
+                <button onClick={() => { setSelectedUser(null); setUsernameInput(''); }} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+              </div>
+            )}
 
             {/* Role Toggle */}
             <div className="modal-field">
               <label>Access level</label>
               <div className="role-toggle-group">
                 {Object.entries(ROLE_LABELS).map(([key, info]) => (
-                  <button
-                    key={key}
-                    className={`role-toggle-btn ${role === key ? 'active' : ''}`}
-                    onClick={() => setRole(key)}
-                  >
+                  <button key={key} className={`role-toggle-btn ${role === key ? 'active' : ''}`} onClick={() => setRole(key)}>
                     <span style={{ fontSize: '16px' }}>{info.icon}</span>
                     <div style={{ textAlign: 'left' }}>
                       <div style={{ fontWeight: '700', fontSize: '13px' }}>{info.label}</div>
@@ -260,36 +299,12 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
               </div>
             </div>
 
-            <button className="btn-save" style={{ width: '100%', marginBottom: '24px' }} onClick={submit}>
-              Send invite
+            <button className="btn-save" style={{ width: '100%', marginBottom: '8px' }} onClick={submit} disabled={!selectedUser}>
+              Send Invite
             </button>
-
-            {/* Divider */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border2)' }} />
-              <span style={{ fontSize: '11px', color: 'var(--faint)', fontWeight: '700' }}>OR SHARE A LINK</span>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border2)' }} />
-            </div>
-
-            {/* Invite link */}
-            <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
-              🔗 Anyone with this link joins as Viewer
-            </div>
-            <div className="invite-link-box">
-              <div className="invite-link-text">{inviteLink}</div>
-              <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                <button className="invite-link-btn" onClick={copyLink}>
-                  {linkCopied ? '✓ Copied!' : 'Copy'}
-                </button>
-                <button className="invite-link-btn secondary" onClick={regenerate} title="Generate a new link (invalidates old one)">
-                  ↺
-                </button>
-              </div>
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '6px' }}>
-              {/* TODO: Note about server-side validation */}
-              Link joins are view-only. Regenerating invalidates the previous link.
-            </div>
+            {inviteMsg && (
+              <div style={{ fontSize: '13px', color: inviteMsg.startsWith('✓') ? '#10b981' : '#ef4444', marginBottom: '16px', textAlign: 'center' }}>{inviteMsg}</div>
+            )}
           </div>
         )}
       </div>

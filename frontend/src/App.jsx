@@ -60,7 +60,14 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState(null);
   
   const [notifications, setNotifications] = useState([]);
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => n.status === 'pending').length;
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const r = await api('get_notifications', null, 'GET');
+      if (r?.notifications) setNotifications(r.notifications);
+    } catch { /* ignore */ }
+  }, []);
 
   const appDataRef = useRef({ projects: [] });
 
@@ -86,13 +93,14 @@ export default function App() {
         setLoggedIn(true);
         setCurrentUser(r.user);
         loadData();
+        loadNotifications();
       } else {
         setLoading(false);
       }
     } catch {
       setLoading(false);
     }
-  }, [loadData]);
+  }, [loadData, loadNotifications]);
 
   useEffect(() => {
     // Theme setup from localStorage
@@ -189,6 +197,7 @@ export default function App() {
       setLoggedIn(true);
       setCurrentUser(user);
       loadData();
+      loadNotifications();
       requestNotificationPermission();
     }} />;
   }
@@ -322,8 +331,8 @@ export default function App() {
               transition={{ duration: 0.18, ease: 'easeInOut' }}
               style={{ height: '100%' }}
             >
-              <ProjectDetailView 
-                project={currentProject} 
+              <ProjectDetailView
+                project={currentProject}
                 onBack={() => setCurrentProjectId(null)}
                 onUpdate={loadData}
                 onToast={toast}
@@ -335,6 +344,7 @@ export default function App() {
                 onOpenNotifications={() => setShowNotifications(true)}
                 onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
+                currentUser={currentUser}
               />
             </motion.div>
           </AnimatePresence>
@@ -433,7 +443,7 @@ export default function App() {
         isOpen={showNotifications}
         onClose={() => setShowNotifications(false)}
         notifications={notifications}
-        onMarkAsRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+        onRefresh={loadNotifications}
       />
 
       <FeedbackPanel

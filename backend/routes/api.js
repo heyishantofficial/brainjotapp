@@ -12,6 +12,7 @@ const Project = require('../models/Project');
 const Space = require('../models/Space');
 const User = require('../models/User');
 const Feedback = require('../models/Feedback');
+const Notification = require('../models/Notification');
 
 const router = express.Router();
 
@@ -262,11 +263,21 @@ router.use(conditionalUpload);
 router.get('/', async (req, res) => {
   const action = req.query.action;
 
+  if (action === 'check_username') {
+    const raw = (req.query.username || '').toLowerCase().trim();
+    if (!raw || raw.length < 3) { res.json({ available: false, error: 'Username must be at least 3 characters' }); return; }
+    if (raw.length > 20) { res.json({ available: false, error: 'Username must be 20 characters or less' }); return; }
+    if (!/^[a-z0-9_]+$/.test(raw)) { res.json({ available: false, error: 'Only letters, numbers and underscores allowed' }); return; }
+    const exists = await User.findOne({ username: raw });
+    res.json({ available: !exists });
+    return;
+  }
+
   if (action === 'check') {
     if (req.session.userId) {
-      const user = await User.findOne({ id: req.session.userId }).select('name email role -_id');
+      const user = await User.findOne({ id: req.session.userId }).select('name email username role -_id');
       if (user) req.session.userRole = user.role || 'user';
-      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, role: user.role || 'user' } : null });
+      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user' } : null });
     } else {
       res.json({ loggedIn: false });
     }
@@ -275,6 +286,23 @@ router.get('/', async (req, res) => {
 
   if (!req.session.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const userId = req.session.userId;
+
+  if (action === 'find_user') {
+    const q = (req.query.q || '').replace(/^@/, '').toLowerCase().trim();
+    if (q.length < 2) { res.json({ users: [] }); return; }
+    const safeQ = q.replace(/[^a-z0-9_]/g, '');
+    const users = await User.find({ username: { $regex: '^' + safeQ }, id: { $ne: userId } })
+      .select('id name username -_id').limit(8).lean();
+    res.json({ users });
+    return;
+  }
+
+  if (action === 'get_notifications') {
+    const notifs = await Notification.find({ toUserId: userId })
+      .sort({ createdAt: -1 }).limit(50).lean();
+    res.json({ notifications: notifs.map(({ _id, __v, ...n }) => n) });
+    return;
+  }
 
   if (action === 'get') {
     const spaces   = await Space.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
@@ -306,25 +334,36 @@ router.post('/', async (req, res, next) => {
   if (action === 'register') {
     return authLimiter(req, res, async () => {
       try {
-        const { email, password, name } = req.body;
+        const { email, password, name, username } = req.body;
         if (!email?.trim() || !password || !name?.trim()) {
           return res.status(400).json({ error: 'Name, email and password are required' });
         }
         if (password.length < 8) {
           return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }
+        if (!username?.trim()) {
+          return res.status(400).json({ error: 'Username is required' });
+        }
+        const cleanUsername = username.toLowerCase().trim();
+        if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-z0-9_]+$/.test(cleanUsername)) {
+          return res.status(400).json({ error: 'Username must be 3-20 chars, letters/numbers/underscores only' });
+        }
         const existing = await User.findOne({ email: email.toLowerCase().trim() });
         if (existing) {
           return res.status(409).json({ error: 'An account with this email already exists' });
         }
+        const takenUsername = await User.findOne({ username: cleanUsername });
+        if (takenUsername) {
+          return res.status(409).json({ error: 'Username already taken' });
+        }
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
         const userId = 'user_' + uid();
         const role = ADMIN_EMAILS.includes(email.toLowerCase().trim()) ? 'superadmin' : 'user';
-        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), passwordHash, role });
+        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), username: cleanUsername, passwordHash, role });
         await seedDefaultData(userId);
         req.session.userId = userId;
         req.session.userRole = role;
-        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, role } });
+        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, username: user.username, role } });
       } catch (err) {
         next(err);
       }
@@ -354,7 +393,7 @@ router.post('/', async (req, res, next) => {
         }
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
-        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role || 'user' } });
+        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user' } });
       } catch (err) {
         next(err);
       }
@@ -372,7 +411,7 @@ router.post('/', async (req, res, next) => {
 
   // ── get_profile_stats ──
   if (action === 'get_profile_stats') {
-    const user = await User.findOne({ id: userId }).select('name email role createdAt -_id');
+    const user = await User.findOne({ id: userId }).select('name email username role createdAt -_id');
     const [projects, spaces, feedbackCount] = await Promise.all([
       Project.find({ ownerId: userId }).lean(),
       Space.find({ ownerId: userId }).lean(),
@@ -384,7 +423,7 @@ router.post('/', async (req, res, next) => {
       fileCount += (p.files || []).length;
     });
     res.json({
-      user: { name: user.name, email: user.email, role: user.role, createdAt: user.createdAt },
+      user: { name: user.name, email: user.email, username: user.username || '', role: user.role, createdAt: user.createdAt },
       stats: {
         projectCount: projects.length,
         spaceCount: spaces.length,
@@ -919,6 +958,96 @@ router.post('/', async (req, res, next) => {
     space.collaborators = space.collaborators.filter(c => c.id !== collaboratorId);
     await space.save();
     res.json({ ok: true });
+    return;
+  }
+
+  // ── send_collab_invite ──
+  if (action === 'send_collab_invite') {
+    const { username, entityId, entityType, role } = req.body;
+    if (!username || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
+    const cleanUN = username.replace(/^@/, '').toLowerCase().trim();
+    const target = await User.findOne({ username: cleanUN }).select('id name username -_id');
+    if (!target) { res.status(404).json({ error: `No user found with @${cleanUN}` }); return; }
+    if (target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
+    let entityTitle = '';
+    if (entityType === 'project') {
+      const proj = await Project.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
+      if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+      if (proj.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
+      entityTitle = proj.title;
+    } else {
+      const space = await Space.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
+      if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+      if (space.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
+      entityTitle = space.title;
+    }
+    const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
+    if (alreadyPending) { res.status(409).json({ error: 'Invite already pending for this user' }); return; }
+    const fromUser = await User.findOne({ id: userId }).select('name username -_id');
+    await Notification.create({
+      id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
+      fromUsername: fromUser.username, fromName: fromUser.name,
+      type: 'collab_invite',
+      meta: { entityId, entityType, entityTitle, role },
+      status: 'pending',
+    });
+    res.json({ ok: true, invitedName: target.name });
+    return;
+  }
+
+  // ── respond_collab_invite ──
+  if (action === 'respond_collab_invite') {
+    const { notifId, accept } = req.body;
+    const notif = await Notification.findOne({ id: notifId, toUserId: userId, type: 'collab_invite', status: 'pending' });
+    if (!notif) { res.status(404).json({ error: 'Invite not found or already handled' }); return; }
+    notif.status = accept ? 'accepted' : 'denied';
+    await notif.save();
+    if (accept) {
+      const me = await User.findOne({ id: userId }).select('id name username email -_id');
+      const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role: notif.meta.role };
+      if (notif.meta.entityType === 'project') {
+        await Project.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
+      } else {
+        await Space.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
+      }
+    }
+    res.json({ ok: true, accepted: accept });
+    return;
+  }
+
+  // ── mark_notification_read ──
+  if (action === 'mark_notification_read') {
+    const { notifId } = req.body || {};
+    if (notifId) {
+      await Notification.updateOne({ id: notifId, toUserId: userId, status: { $nin: ['pending'] } }, { status: 'read' });
+    } else {
+      await Notification.updateMany({ toUserId: userId, status: { $nin: ['pending', 'accepted', 'denied'] } }, { status: 'read' });
+    }
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── add_task_comment ──
+  if (action === 'add_task_comment') {
+    const { projectId, taskId, text, mentions = [] } = req.body;
+    if (!projectId || !taskId || !text?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { 'collaborators.userId': userId }] });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const me = await User.findOne({ id: userId }).select('name username -_id');
+    const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, text: text.trim().slice(0, 1000), mentions, createdAt: new Date() };
+    await Project.updateOne({ id: projectId, 'tasks.id': taskId }, { $push: { 'tasks.$.comments': comment } });
+    if (mentions.length) {
+      const mentionedUsers = await User.find({ username: { $in: mentions } }).select('id -_id').lean();
+      const task = proj.tasks.find(t => t.id === taskId);
+      const notifDocs = mentionedUsers.filter(u => u.id !== userId).map(u => ({
+        id: 'notif_' + uid(), toUserId: u.id, fromUserId: userId, fromUsername: me.username || '', fromName: me.name,
+        type: 'mention',
+        meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) },
+        status: 'pending',
+      }));
+      if (notifDocs.length) await Notification.insertMany(notifDocs);
+    }
+    res.json({ ok: true, comment });
     return;
   }
 

@@ -183,6 +183,9 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
                 <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '20px', background: '#7c3aed22', color: '#7c3aed' }}>⚡ Admin</span>
               )}
             </div>
+            {user.username && (
+              <div style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: '700', marginTop: '2px' }}>@{user.username}</div>
+            )}
             <div style={{ fontSize: '14px', color: 'var(--muted)', marginTop: '3px' }}>{user.email}</div>
             <div style={{ fontSize: '12px', color: 'var(--faint)', marginTop: '3px' }}>Member since {fmt(user.createdAt)}</div>
           </div>
@@ -206,6 +209,11 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             <Field label="Display Name">
               <input value={editName} onChange={e => { setEditName(e.target.value); setEditMsg(''); }} style={inputStyle} placeholder="Your name" />
             </Field>
+            {user.username && (
+              <Field label="Username (permanent)">
+                <div style={{ ...inputStyle, color: 'var(--accent)', fontWeight: '700', cursor: 'default', userSelect: 'all' }}>@{user.username}</div>
+              </Field>
+            )}
             <Field label="Email Address">
               <input value={editEmail} onChange={e => { setEditEmail(e.target.value); setEditMsg(''); }} style={inputStyle} placeholder="you@email.com" type="email" />
             </Field>

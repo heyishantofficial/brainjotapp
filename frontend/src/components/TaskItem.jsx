@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { apiForm } from '../api';
+import { api, apiForm } from '../api';
 import DOMPurify from 'dompurify';
+import MentionInput from './MentionInput';
 
 const PRIORITIES = {
   urgent: { icon: '🔥', label: 'Urgent' },
@@ -8,21 +9,23 @@ const PRIORITIES = {
   later: { icon: '💤', label: 'Later' }
 };
 
-export default function TaskItem({ 
-  task, 
-  project, 
-  onToggle, 
-  onDelete, 
-  onUpdateText, 
-  onUpdateMeta, 
-  onSaveNotes, 
-  onOpenWordpad, 
-  onUploadComplete, 
-  onDeleteFile, 
+export default function TaskItem({
+  task,
+  project,
+  onToggle,
+  onDelete,
+  onUpdateText,
+  onUpdateMeta,
+  onSaveNotes,
+  onOpenWordpad,
+  onUploadComplete,
+  onDeleteFile,
   onOpenLightbox,
   highlighted,
   readOnly = false,
-  isCommenter
+  isCommenter,
+  currentUser,
+  collaborators = [],
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -158,16 +161,13 @@ export default function TaskItem({
     }
   };
 
-  const handleSendComment = () => {
+  const handleSendComment = async () => {
     if (!chatInput.trim()) return;
-    const newComments = [...(task.comments || []), {
-      id: 'msg' + Date.now(),
-      author: 'Me',
-      text: chatInput.trim(),
-      time: 'Just now'
-    }];
+    const text = chatInput.trim();
+    const mentions = [...text.matchAll(/@([a-z0-9_]+)/gi)].map(m => m[1].toLowerCase());
     setChatInput('');
-    onUpdateMeta('comments', newComments);
+    await api('add_task_comment', { projectId: project.id, taskId: task.id, text, mentions });
+    onUploadComplete();
   };
 
   const handleFileUpload = async (files) => {
@@ -442,32 +442,48 @@ export default function TaskItem({
         {/* --- Task Level Chat Section --- */}
         <div className="task-chat-section">
           <div className="task-panel-label" style={{ marginBottom: '8px' }}>Task Discussion</div>
-          
-          <div className="chat-thread" style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '250px', overflowY: 'auto', paddingBottom: '8px' }}>
+
+          <div className="chat-thread" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto', paddingBottom: '8px' }}>
             {(!task.comments || task.comments.length === 0) ? (
               <div style={{ fontSize: '13px', color: 'var(--muted)', textAlign: 'center', padding: '16px 0' }}>No comments yet. Start the discussion!</div>
             ) : (
-              task.comments.map(msg => (
-                <div key={msg.id} className={`chat-bubble ${msg.author === 'Me' ? 'mine' : 'theirs'}`}>
-                  {msg.author !== 'Me' && <div style={{ fontSize: '11px', fontWeight: '800', marginBottom: '2px', opacity: 0.7 }}>{msg.author}</div>}
-                  <div>{msg.text}</div>
-                  <div style={{ fontSize: '10px', marginTop: '4px', opacity: 0.5, textAlign: msg.author === 'Me' ? 'right' : 'left' }}>{msg.time}</div>
-                </div>
-              ))
+              task.comments.map(msg => {
+                const isMine = msg.userId === currentUser?.id || msg.author === 'Me';
+                const displayName = msg.name || msg.author || 'User';
+                const handle = msg.username ? `@${msg.username}` : null;
+                const timeLabel = msg.createdAt
+                  ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : (msg.time || '');
+                return (
+                  <div key={msg.id} className={`chat-bubble ${isMine ? 'mine' : 'theirs'}`}>
+                    {!isMine && (
+                      <div style={{ fontSize: '11px', fontWeight: '800', marginBottom: '2px', opacity: 0.8 }}>
+                        {displayName}{handle && <span style={{ color: 'var(--accent)', marginLeft: '4px' }}>{handle}</span>}
+                      </div>
+                    )}
+                    <div>
+                      {msg.text.split(/(@[a-z0-9_]+)/gi).map((part, i) =>
+                        /^@[a-z0-9_]+$/i.test(part)
+                          ? <span key={i} style={{ color: 'var(--accent)', fontWeight: '700' }}>{part}</span>
+                          : part
+                      )}
+                    </div>
+                    <div style={{ fontSize: '10px', marginTop: '4px', opacity: 0.5, textAlign: isMine ? 'right' : 'left' }}>{timeLabel}</div>
+                  </div>
+                );
+              })
             )}
           </div>
 
           {(!readOnly || isCommenter) && (
-            <div className="chat-input-wrapper">
-              <input 
-                type="text" 
-                className="chat-input" 
-                placeholder="Ask a question or share an update..." 
+            <div style={{ marginTop: '8px' }}>
+              <MentionInput
                 value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSendComment()}
+                onChange={setChatInput}
+                onSubmit={handleSendComment}
+                placeholder="Write a comment… Type @ to mention"
+                collaborators={collaborators}
               />
-              <button className="chat-send-btn" onClick={handleSendComment} title="Send message">↑</button>
             </div>
           )}
         </div>
