@@ -67,13 +67,6 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
-  // Poll notifications and app data every 20 s while logged in
-  useEffect(() => {
-    if (!loggedIn) return;
-    const id = setInterval(() => { loadNotifications(); loadData(); }, 20000);
-    return () => clearInterval(id);
-  }, [loggedIn, loadNotifications, loadData]);
-
   const appDataRef = useRef({ projects: [] });
 
   const loadData = useCallback(async () => {
@@ -92,6 +85,13 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  // Poll notifications and app data every 20 s while logged in
+  useEffect(() => {
+    if (!loggedIn) return;
+    const id = setInterval(() => { loadNotifications(); loadData(); }, 20000);
+    return () => clearInterval(id);
+  }, [loggedIn, loadNotifications, loadData]);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -117,7 +117,7 @@ export default function App() {
     }
     
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('invite');
+    const token = params.get('join');
     if (token) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setInviteToken(token);
@@ -126,14 +126,25 @@ export default function App() {
     checkAuth();
   }, [checkAuth]);
 
-  const handleAcceptInvite = () => {
-    // In a real app, send api('accept_invite', { token: inviteToken }) here
+  const handleAcceptInvite = useCallback(async (result) => {
     setInviteToken(null);
-    // Remove query param without reloading
     window.history.replaceState({}, document.title, window.location.pathname);
-    // Simulate accepting the invite by selecting the shared project
-    setCurrentSharedProjectId('shared-demo-1');
-  };
+    if (result?.ok) {
+      await loadData();
+      loadNotifications();
+      if (result.entityType === 'project' && !result.alreadyOwner) {
+        setCurrentSharedProjectId(result.entityId);
+        setCurrentProjectId(null);
+        setCurrentSpaceId(null);
+        setCurrentSharedSpaceId(null);
+      } else if (result.entityType === 'space' && !result.alreadyOwner) {
+        setCurrentSharedSpaceId(result.entityId);
+        setCurrentSpaceId(null);
+        setCurrentProjectId(null);
+        setCurrentSharedProjectId(null);
+      }
+    }
+  }, [loadData, loadNotifications]);
 
 
   const handleNotifNavigate = useCallback(({ entityType, entityId, taskId }) => {
@@ -217,7 +228,17 @@ export default function App() {
 
   if (loading) return null;
 
-  if (inviteToken) {
+  if (inviteToken && !loggedIn) {
+    return <LoginScreen onLoginSuccess={(user) => {
+      setLoggedIn(true);
+      setCurrentUser(user);
+      loadData();
+      loadNotifications();
+      requestNotificationPermission();
+    }} />;
+  }
+
+  if (inviteToken && loggedIn) {
     return <InviteLandingView inviteToken={inviteToken} onAccept={handleAcceptInvite} />;
   }
 

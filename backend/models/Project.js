@@ -62,6 +62,8 @@ const projectSchema = new mongoose.Schema({
   spaceId: { type: String, default: '' },
   ownerId: { type: String, index: true },
   __orderRank: { type: Number, default: 0 },
+  inviteToken: { type: String, default: '' },
+  inviteLinkRole: { type: String, default: 'editor' },
 });
 
 module.exports = mongoose.model('Project', projectSchema);

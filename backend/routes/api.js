@@ -1038,27 +1038,34 @@ router.post('/', async (req, res, next) => {
 
   // ── send_collab_invite ──
   if (action === 'send_collab_invite') {
-    const { username, entityId, entityType, role } = req.body;
-    if (!username || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
-    const cleanUN = username.replace(/^@/, '').toLowerCase().trim();
-    const target = await User.findOne({ username: cleanUN }).select('id name username -_id');
-    if (!target) { res.status(404).json({ error: `No user found with @${cleanUN}` }); return; }
-    if (target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
+    const { email, entityId, entityType, role } = req.body;
+    if (!email || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
+    const cleanEmail = email.toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { res.status(400).json({ error: 'Invalid email address' }); return; }
     let entityTitle = '';
     if (entityType === 'project') {
       const proj = await Project.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
       if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
-      if (proj.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
       entityTitle = proj.title;
+      const target = await User.findOne({ email: cleanEmail }).select('id -_id');
+      if (target && proj.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
     } else {
       const space = await Space.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
       if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
-      if (space.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
       entityTitle = space.title;
+      const target = await User.findOne({ email: cleanEmail }).select('id -_id');
+      if (target && space.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
     }
+    const target = await User.findOne({ email: cleanEmail }).select('id name username email avatarUrl -_id');
+    const fromUser = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
+    if (!target) {
+      sendInviteEmail({ to: cleanEmail, toName: '', inviterName: fromUser.name, projectTitle: entityType === 'project' ? entityTitle : null, spaceTitle: entityType === 'space' ? entityTitle : null });
+      res.json({ ok: true, notFound: true, invitedName: cleanEmail });
+      return;
+    }
+    if (target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
     const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
     if (alreadyPending) { res.status(409).json({ error: 'Invite already pending for this user' }); return; }
-    const fromUser = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
     await Notification.create({
       id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
       fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
@@ -1067,6 +1074,52 @@ router.post('/', async (req, res, next) => {
       status: 'pending',
     });
     res.json({ ok: true, invitedName: target.name });
+    return;
+  }
+
+  // ── generate_invite_link ──
+  if (action === 'generate_invite_link') {
+    const { entityId, entityType, role = 'editor' } = req.body;
+    if (!entityId || !entityType) { res.status(400).json({ error: 'Missing fields' }); return; }
+    const token = crypto.randomBytes(12).toString('hex');
+    if (entityType === 'project') {
+      await Project.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role } });
+    } else {
+      await Space.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role } });
+    }
+    res.json({ ok: true, token });
+    return;
+  }
+
+  // ── join_via_link ──
+  if (action === 'join_via_link') {
+    const { token } = req.body;
+    if (!token) { res.status(400).json({ error: 'Missing token' }); return; }
+    let entity = await Project.findOne({ inviteToken: token }).lean();
+    let entityType = entity ? 'project' : null;
+    if (!entity) {
+      entity = await Space.findOne({ inviteToken: token }).lean();
+      entityType = entity ? 'space' : null;
+    }
+    if (!entity) { res.status(404).json({ error: 'Invalid or expired invite link' }); return; }
+    if (entity.ownerId === userId) { res.json({ ok: true, alreadyOwner: true, entityType, entityId: entity.id, entityTitle: entity.title, role: 'owner' }); return; }
+    if ((entity.collaborators || []).some(c => c.userId === userId)) { res.json({ ok: true, alreadyMember: true, entityType, entityId: entity.id, entityTitle: entity.title, role: (entity.collaborators.find(c => c.userId === userId))?.role || 'editor' }); return; }
+    const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
+    const role = entity.inviteLinkRole || 'editor';
+    const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role, avatarUrl: me.avatarUrl || '' };
+    if (entityType === 'project') {
+      await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+    } else {
+      await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+    }
+    await Notification.create({
+      id: 'notif_' + uid(), toUserId: entity.ownerId, fromUserId: userId,
+      fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
+      type: 'invite_response',
+      meta: { entityId: entity.id, entityType, entityTitle: entity.title, role, accepted: true },
+      status: 'pending',
+    });
+    res.json({ ok: true, entityType, entityId: entity.id, entityTitle: entity.title, role });
     return;
   }
 

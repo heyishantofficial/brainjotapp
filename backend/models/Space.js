@@ -1,10 +1,13 @@
 const mongoose = require('mongoose');
 
 const spaceCollaboratorSchema = new mongoose.Schema({
-  id:    String,
-  name:  String,
-  email: String,
-  role:  { type: String, default: 'editor' },
+  id:        String,
+  userId:    String,
+  name:      String,
+  username:  String,
+  email:     String,
+  role:      { type: String, default: 'editor' },
+  avatarUrl: String,
 }, { _id: false });
 
 const spaceSchema = new mongoose.Schema({
@@ -16,6 +19,8 @@ const spaceSchema = new mongoose.Schema({
   __orderRank: { type: Number, default: 0 },
   ownerId: { type: String, index: true },
   collaborators: { type: [spaceCollaboratorSchema], default: [] },
+  inviteToken: { type: String, default: '' },
+  inviteLinkRole: { type: String, default: 'editor' },
 });
 
 module.exports = mongoose.model('Space', spaceSchema);

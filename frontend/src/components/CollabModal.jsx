@@ -1,20 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { api } from '../api';
 import Avatar from './Avatar';
-
-/**
- * CollabModal — Full collaboration management panel
- *
- * Tabs:
- *   1. Members — list all collaborators, their roles, online status, remove/change role
- *   2. Invite  — invite by email (with role), share invite link
- *
- * TODO when backend is ready:
- *   - invite_collaborator: also pass { role } field
- *   - add endpoint: PATCH /api/collaborator/role { projectId, collaboratorId, role }
- *   - add endpoint: POST  /api/project/regenerate-link { projectId }
- *   - add endpoint: GET   /api/project/presence { projectId } → { onlineIds: [] }
- */
 
 const ROLE_LABELS = {
   editor: { label: 'Editor', desc: 'Can add, edit & complete tasks', icon: '✏️', color: '#6366f1' },
@@ -22,69 +8,31 @@ const ROLE_LABELS = {
   viewer: { label: 'Viewer', desc: 'Can view tasks and notes only',   icon: '👁',  color: '#8b5cf6' },
 };
 
-function initials(name) {
-  if (!name) return '?';
-  return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-}
-
-function hashColor(str) {
-  const colors = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6'];
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return colors[Math.abs(h) % colors.length];
-}
-
-// Generate or retrieve invite link for this project (stored in localStorage until backend ready)
-function getInviteLink(projectId) {
-  const key = `brainjot_invite_${projectId}`;
-  let token = localStorage.getItem(key);
-  if (!token) {
-    token = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-    localStorage.setItem(key, token);
-  }
-  // TODO: replace with real server-generated token from POST /api/project/invite-link
-  return `${window.location.origin}/invite/${token}`;
-}
-
-function regenerateInviteLink(projectId) {
-  const key = `brainjot_invite_${projectId}`;
-  const token = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-  localStorage.setItem(key, token);
-  // TODO: call POST /api/project/regenerate-link { projectId } to invalidate old link on server
-  return `${window.location.origin}/invite/${token}`;
-}
-
 export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast }) {
   const [activeTab, setActiveTab] = useState('members');
-  const [usernameInput, setUsernameInput] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
+  const [emailInput, setEmailInput] = useState('');
   const [role, setRole] = useState('editor');
-  const [inviteLink, setInviteLink] = useState(() => getInviteLink(projectId));
-  const [linkCopied, setLinkCopied] = useState(false);
-  const [changingRoleId, setChangingRoleId] = useState(null);
   const [inviteMsg, setInviteMsg] = useState('');
-  const debounceRef = useRef(null);
+  const [changingRoleId, setChangingRoleId] = useState(null);
+  // Invite link state
+  const [inviteLink, setInviteLink] = useState(() =>
+    project?.inviteToken ? `${window.location.origin}/?join=${project.inviteToken}` : ''
+  );
+  const [linkRole, setLinkRole] = useState(project?.inviteLinkRole || 'editor');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   const collabs = project?.collaborators || [];
 
-  useEffect(() => {
-    if (!usernameInput || usernameInput.length < 2) { setSearchResults([]); return; }
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      const r = await api('find_user', null, 'GET', `&q=${encodeURIComponent(usernameInput)}`);
-      setSearchResults(r?.users || []);
-    }, 300);
-    return () => clearTimeout(debounceRef.current);
-  }, [usernameInput]);
-
   const submit = async () => {
-    if (!selectedUser) { setInviteMsg('Select a user from the search results first'); return; }
+    if (!emailInput.trim()) { setInviteMsg('Enter an email address'); return; }
     setInviteMsg('');
-    const r = await api('send_collab_invite', { username: selectedUser.username, entityId: projectId, entityType: 'project', role });
+    const r = await api('send_collab_invite', { email: emailInput.trim(), entityId: projectId, entityType: 'project', role });
     if (r?.ok) {
-      setInviteMsg(`✓ Invite sent to @${selectedUser.username}`);
-      setSelectedUser(null); setUsernameInput(''); setSearchResults([]);
+      setInviteMsg(r.notFound
+        ? `✓ Signup invite emailed to ${emailInput.trim()}`
+        : `✓ Invite sent to ${r.invitedName || emailInput.trim()}`);
+      setEmailInput('');
     } else {
       setInviteMsg(r?.error || 'Something went wrong');
     }
@@ -103,6 +51,16 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
     onToast(`Role updated to ${ROLE_LABELS[newRole].label}`);
   };
 
+  const generateLink = async () => {
+    setLinkLoading(true);
+    const r = await api('generate_invite_link', { entityId: projectId, entityType: 'project', role: linkRole });
+    setLinkLoading(false);
+    if (r?.token) {
+      setInviteLink(`${window.location.origin}/?join=${r.token}`);
+      onToast('Invite link generated');
+    }
+  };
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(inviteLink);
@@ -111,12 +69,6 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
     } catch {
       onToast('Could not copy — please copy manually');
     }
-  };
-
-  const regenerate = () => {
-    const newLink = regenerateInviteLink(projectId);
-    setInviteLink(newLink);
-    onToast('Invite link regenerated');
   };
 
   return (
@@ -138,22 +90,15 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
 
         {/* Tabs */}
         <div className="collab-tabs">
-          <button className={`collab-tab ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}>
-            Members
-          </button>
-          <button className={`collab-tab ${activeTab === 'invite' ? 'active' : ''}`} onClick={() => setActiveTab('invite')}>
-            + Invite
-          </button>
+          <button className={`collab-tab ${activeTab === 'members' ? 'active' : ''}`} onClick={() => setActiveTab('members')}>Members</button>
+          <button className={`collab-tab ${activeTab === 'invite' ? 'active' : ''}`} onClick={() => setActiveTab('invite')}>+ Invite</button>
         </div>
 
         {/* ── TAB: MEMBERS ── */}
         {activeTab === 'members' && (
           <div style={{ marginTop: '16px' }}>
-            {/* Owner row */}
             <div className="collab-member-row">
-              <div className="collab-member-avatar" style={{ background: '#D4FF32', color: '#000' }}>
-                YO
-              </div>
+              <div className="collab-member-avatar" style={{ background: '#D4FF32', color: '#000' }}>YO</div>
               <div className="collab-member-info">
                 <div className="collab-member-name">You (Owner)</div>
                 <div className="collab-member-email">Project owner</div>
@@ -176,25 +121,15 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
               const memberRole = c.role || 'editor';
               const roleInfo = ROLE_LABELS[memberRole];
               const isChanging = changingRoleId === c.id;
-
               return (
                 <div key={c.id} className="collab-member-row">
-                  {/* Avatar with presence dot */}
                   <div style={{ position: 'relative', flexShrink: 0 }}>
                     <Avatar name={c.name} src={c.avatarUrl} size={40} style={{ border: '2px solid var(--border)' }} />
-                    {/* TODO: Replace with real presence data from usePresence hook */}
-                    {/* Simulated: show online dot for first collaborator as demo */}
-                    {c.id === collabs[0]?.id && (
-                      <div className="presence-dot online" title="Online now" />
-                    )}
                   </div>
-
                   <div className="collab-member-info">
                     <div className="collab-member-name">{c.name}</div>
                     <div className="collab-member-email">{c.email}</div>
                   </div>
-
-                  {/* Role badge + change role */}
                   <div style={{ position: 'relative', marginLeft: 'auto', marginRight: '8px' }}>
                     <button
                       className="collab-role-badge"
@@ -203,15 +138,10 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
                     >
                       {roleInfo.icon} {roleInfo.label} ▾
                     </button>
-
                     {isChanging && (
                       <div className="role-dropdown">
                         {Object.entries(ROLE_LABELS).map(([key, info]) => (
-                          <button
-                            key={key}
-                            className={`role-option ${memberRole === key ? 'active' : ''}`}
-                            onClick={() => changeRole(c.id, key)}
-                          >
+                          <button key={key} className={`role-option ${memberRole === key ? 'active' : ''}`} onClick={() => changeRole(c.id, key)}>
                             <span style={{ fontSize: '15px' }}>{info.icon}</span>
                             <div>
                               <div style={{ fontWeight: '700', fontSize: '13px' }}>{info.label}</div>
@@ -223,10 +153,7 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
                       </div>
                     )}
                   </div>
-
-                  <button className="collab-remove-btn" onClick={() => removeCollab(c.id)} title="Remove collaborator">
-                    ✕
-                  </button>
+                  <button className="collab-remove-btn" onClick={() => removeCollab(c.id)} title="Remove collaborator">✕</button>
                 </div>
               );
             })}
@@ -236,52 +163,23 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
         {/* ── TAB: INVITE ── */}
         {activeTab === 'invite' && (
           <div style={{ marginTop: '16px' }}>
+
+            {/* Email invite */}
             <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
-              Invite by @username
+              Invite by email
             </div>
 
-            {/* Username search */}
-            <div className="modal-field" style={{ position: 'relative' }}>
-              <label>Search username</label>
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontWeight: '700' }}>@</span>
-                <input
-                  type="text" placeholder="username" style={{ paddingLeft: '26px' }}
-                  value={usernameInput}
-                  onChange={e => { setUsernameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')); setSelectedUser(null); setInviteMsg(''); }}
-                />
-              </div>
-              {searchResults.length > 0 && !selectedUser && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', zIndex: 100, overflow: 'hidden', marginTop: '4px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-                  {searchResults.map(u => (
-                    <button key={u.id} onClick={() => { setSelectedUser(u); setUsernameInput(u.username); setSearchResults([]); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', padding: '10px 14px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <Avatar name={u.name} src={u.avatarUrl} size={32} />
-                      <div>
-                        <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text)' }}>{u.name}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--accent)' }}>@{u.username}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+            <div className="modal-field">
+              <label>Email address</label>
+              <input
+                type="email"
+                placeholder="colleague@email.com"
+                value={emailInput}
+                onChange={e => { setEmailInput(e.target.value); setInviteMsg(''); }}
+                onKeyDown={e => e.key === 'Enter' && submit()}
+              />
             </div>
 
-            {selectedUser && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'var(--surface2)', borderRadius: '12px', marginBottom: '12px', border: '1px solid var(--border)' }}>
-                <Avatar name={selectedUser.name} src={selectedUser.avatarUrl} size={36} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '14px', fontWeight: '700' }}>{selectedUser.name}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--accent)' }}>@{selectedUser.username}</div>
-                </div>
-                <button onClick={() => { setSelectedUser(null); setUsernameInput(''); }} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '16px' }}>✕</button>
-              </div>
-            )}
-
-            {/* Role Toggle */}
             <div className="modal-field">
               <label>Access level</label>
               <div className="role-toggle-group">
@@ -298,12 +196,75 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
               </div>
             </div>
 
-            <button className="btn-save" style={{ width: '100%', marginBottom: '8px' }} onClick={submit} disabled={!selectedUser}>
+            <button className="btn-save" style={{ width: '100%', marginBottom: '8px' }} onClick={submit} disabled={!emailInput.trim()}>
               Send Invite
             </button>
             {inviteMsg && (
-              <div style={{ fontSize: '13px', color: inviteMsg.startsWith('✓') ? '#10b981' : '#ef4444', marginBottom: '16px', textAlign: 'center' }}>{inviteMsg}</div>
+              <div style={{ fontSize: '13px', color: inviteMsg.startsWith('✓') ? '#10b981' : '#ef4444', marginBottom: '4px', textAlign: 'center' }}>{inviteMsg}</div>
             )}
+
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0 16px' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>or share a link</span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            </div>
+
+            {/* Link role selector */}
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '6px', fontWeight: '600' }}>Role for link joiners</div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {Object.entries(ROLE_LABELS).map(([key, info]) => (
+                  <button
+                    key={key}
+                    onClick={() => setLinkRole(key)}
+                    style={{
+                      padding: '5px 10px', borderRadius: '8px', border: '1px solid',
+                      borderColor: linkRole === key ? info.color : 'var(--border)',
+                      background: linkRole === key ? `${info.color}18` : 'transparent',
+                      color: linkRole === key ? info.color : 'var(--muted)',
+                      fontSize: '12px', fontWeight: '700', cursor: 'pointer',
+                    }}
+                  >{info.icon} {info.label}</button>
+                ))}
+              </div>
+            </div>
+
+            {inviteLink ? (
+              <>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    readOnly
+                    value={inviteLink}
+                    style={{ flex: 1, fontSize: '11px', padding: '8px 10px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--muted)', cursor: 'text' }}
+                    onClick={e => e.target.select()}
+                  />
+                  <button
+                    onClick={copyLink}
+                    style={{ padding: '8px 14px', borderRadius: '8px', background: linkCopied ? '#10b981' : 'var(--accent)', color: '#000', border: 'none', fontSize: '12px', fontWeight: '800', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    {linkCopied ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+                <button
+                  onClick={generateLink}
+                  disabled={linkLoading}
+                  style={{ marginTop: '8px', background: 'transparent', border: 'none', color: 'var(--muted)', fontSize: '12px', fontWeight: '700', cursor: linkLoading ? 'default' : 'pointer', padding: 0 }}
+                >
+                  {linkLoading ? '…' : '↻ Regenerate link'}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={generateLink}
+                disabled={linkLoading}
+                className="btn-save"
+                style={{ width: '100%' }}
+              >
+                {linkLoading ? 'Generating…' : 'Generate Invite Link'}
+              </button>
+            )}
+
           </div>
         )}
       </div>
