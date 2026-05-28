@@ -19,6 +19,7 @@ import SpaceCollabModal from './components/SpaceCollabModal';
 import NotificationModal from './components/NotificationModal';
 import FeedbackPanel from './components/FeedbackPanel';
 import InviteLandingView from './views/InviteLandingView';
+import AdminView from './views/AdminView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 
 const MOCK_SHARED_SPACES = [];
@@ -188,6 +189,15 @@ export default function App() {
       loadData();
       requestNotificationPermission();
     }} />;
+  }
+
+  // Admin route gate — navigating to /admin shows the panel only for superadmins
+  if (window.location.pathname === '/admin') {
+    if (currentUser?.role === 'superadmin') {
+      return <AdminView currentUser={currentUser} onLogout={handleLogout} />;
+    }
+    // Not an admin — silently redirect to home
+    window.history.replaceState({}, '', '/');
   }
 
   const currentProject = (appData.projects || []).find(p => p.id === currentProjectId);

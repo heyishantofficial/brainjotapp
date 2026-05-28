@@ -16,6 +16,8 @@ const Feedback = require('../models/Feedback');
 const router = express.Router();
 
 const APP_URL = process.env.APP_URL || 'https://brainjotapp.up.railway.app';
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const FROM_EMAIL = process.env.FROM_EMAIL || 'BrainJot <onboarding@resend.dev>';
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -262,8 +264,9 @@ router.get('/', async (req, res) => {
 
   if (action === 'check') {
     if (req.session.userId) {
-      const user = await User.findOne({ id: req.session.userId }).select('name email -_id');
-      res.json({ loggedIn: true, user: user ? { name: user.name, email: user.email } : null });
+      const user = await User.findOne({ id: req.session.userId }).select('name email role -_id');
+      if (user) req.session.userRole = user.role || 'user';
+      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, role: user.role || 'user' } : null });
     } else {
       res.json({ loggedIn: false });
     }
@@ -316,10 +319,12 @@ router.post('/', async (req, res, next) => {
         }
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
         const userId = 'user_' + uid();
-        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), passwordHash });
+        const role = ADMIN_EMAILS.includes(email.toLowerCase().trim()) ? 'superadmin' : 'user';
+        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), passwordHash, role });
         await seedDefaultData(userId);
         req.session.userId = userId;
-        res.json({ ok: true, user: { name: user.name, email: user.email } });
+        req.session.userRole = role;
+        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, role } });
       } catch (err) {
         next(err);
       }
@@ -342,8 +347,14 @@ router.post('/', async (req, res, next) => {
         if (!match) {
           return res.status(401).json({ error: 'Invalid email or password' });
         }
+        // Auto-elevate if email is in ADMIN_EMAILS
+        if (ADMIN_EMAILS.includes(user.email) && user.role !== 'superadmin') {
+          await User.updateOne({ id: user.id }, { role: 'superadmin' });
+          user.role = 'superadmin';
+        }
         req.session.userId = user.id;
-        res.json({ ok: true, user: { name: user.name, email: user.email } });
+        req.session.userRole = user.role || 'user';
+        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role || 'user' } });
       } catch (err) {
         next(err);
       }

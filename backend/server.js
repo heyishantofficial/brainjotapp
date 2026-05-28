@@ -8,6 +8,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 
 const apiRouter = require('./routes/api');
+const adminRouter = require('./routes/admin');
 
 const app = express();
 app.set('trust proxy', 1); // Railway sits behind a proxy
@@ -43,6 +44,7 @@ app.use(session({
   },
 }));
 
+app.use('/api/admin', adminRouter);
 app.use('/api', apiRouter.router);
 
 // Serve the built React frontend (production)
