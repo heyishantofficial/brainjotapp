@@ -793,7 +793,7 @@ router.post('/', async (req, res, next) => {
 
   // ── update_task_meta ──
   if (action === 'update_task_meta') {
-    const { projectId, taskId, deadline, assignee, assignees, priority, comments } = req.body;
+    const { projectId, taskId, deadline, assignee, assignees, priority, comments, badge } = req.body;
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
@@ -805,6 +805,7 @@ router.post('/', async (req, res, next) => {
       if (assignees !== undefined) task.assignees = Array.isArray(assignees) ? assignees : [];
       if (priority  !== undefined) task.priority  = priority.trim();
       if (comments  !== undefined) task.comments  = Array.isArray(comments) ? comments : [];
+      if (badge     !== undefined) task.badge     = badge;
     }
     await proj.save();
     // Notify newly assigned users
@@ -1239,6 +1240,34 @@ router.post('/', async (req, res, next) => {
     if (allNotifs.length) await Notification.insertMany(allNotifs);
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, comment });
+    return;
+  }
+
+  // ── add_project_label ──
+  if (action === 'add_project_label') {
+    const { projectId, name, color } = req.body;
+    if (!name?.trim()) { res.status(400).json({ error: 'Label name required' }); return; }
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const labelId = 'lbl_' + uid();
+    proj.labels.push({ id: labelId, name: name.trim().slice(0, 30), color: color || '#6366f1' });
+    await proj.save();
+    emitProjectUpdate(req, projectId);
+    res.json({ ok: true, id: labelId });
+    return;
+  }
+
+  // ── delete_project_label ──
+  if (action === 'delete_project_label') {
+    const { projectId, labelId } = req.body;
+    if (!labelId) { res.status(400).json({ error: 'labelId required' }); return; }
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    proj.labels = proj.labels.filter(l => l.id !== labelId);
+    proj.tasks.forEach(t => { if (t.badge === labelId) t.badge = ''; });
+    await proj.save();
+    emitProjectUpdate(req, projectId);
+    res.json({ ok: true });
     return;
   }
 

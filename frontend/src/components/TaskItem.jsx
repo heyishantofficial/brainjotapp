@@ -35,6 +35,11 @@ export default function TaskItem({
   const [notesStatus, setNotesStatus] = useState('Auto-saves');
   const [chatInput, setChatInput] = useState('');
   const [localComments, setLocalComments] = useState(task.comments || []);
+  const [showLabelPicker, setShowLabelPicker] = useState(false);
+  const [creatingLabel, setCreatingLabel] = useState(false);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [newLabelColor, setNewLabelColor] = useState('#6366f1');
+  const [savingLabel, setSavingLabel] = useState(false);
 
   const notesTimerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -44,6 +49,7 @@ export default function TaskItem({
   const assigneeDropdownRef = useRef(null);
   const chatThreadRef = useRef(null);
   const taskRef = useRef(null);
+  const labelPickerRef = useRef(null);
 
   const fileCount = (task.files || []).length;
   const hasNotes = (task.notes || '').trim().length > 0 || (task.richNotes || '').trim().length > 0;
@@ -99,6 +105,49 @@ export default function TaskItem({
       setTimeout(() => taskRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
     }
   }, [highlighted]);
+
+  // Close label picker on outside click
+  useEffect(() => {
+    if (!showLabelPicker) return;
+    const handleClick = (e) => {
+      if (labelPickerRef.current && !labelPickerRef.current.contains(e.target)) {
+        setShowLabelPicker(false);
+        setCreatingLabel(false);
+        setNewLabelName('');
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showLabelPicker]);
+
+  const LABEL_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1','#94a3b8'];
+  const projectLabels = project.labels || [];
+  const currentLabel = projectLabels.find(l => l.id === task.badge) || null;
+
+  const selectLabel = (labelId) => {
+    onUpdateMeta('badge', labelId);
+    setShowLabelPicker(false);
+  };
+
+  const saveNewLabel = async () => {
+    if (!newLabelName.trim() || savingLabel) return;
+    setSavingLabel(true);
+    const r = await api('add_project_label', { projectId: project.id, name: newLabelName.trim(), color: newLabelColor });
+    setSavingLabel(false);
+    if (r?.ok) {
+      setCreatingLabel(false);
+      setNewLabelName('');
+      setNewLabelColor('#6366f1');
+      onUpdateMeta('badge', r.id);
+      onUploadComplete();
+    }
+  };
+
+  const deleteLabel = async (e, labelId) => {
+    e.stopPropagation();
+    await api('delete_project_label', { projectId: project.id, labelId });
+    onUploadComplete();
+  };
 
   const priorityMeta = PRIORITIES[task.priority] || null;
   const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
@@ -265,7 +314,84 @@ export default function TaskItem({
           </span>
         )}
 
-        {!isEditing && task.badge && <span className="task-badge-el">{task.badge}</span>}
+        {!isEditing && (
+          <div style={{ position: 'relative', flexShrink: 0 }} ref={labelPickerRef}>
+            {currentLabel ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); if (!readOnly) setShowLabelPicker(v => !v); }}
+                style={{ background: `${currentLabel.color}22`, color: currentLabel.color, border: `1px solid ${currentLabel.color}55`, borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '700', cursor: readOnly ? 'default' : 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '5px' }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: currentLabel.color, flexShrink: 0 }} />
+                {currentLabel.name}
+              </button>
+            ) : !readOnly ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowLabelPicker(v => !v); }}
+                style={{ background: 'transparent', border: '1px dashed var(--border)', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', color: 'var(--faint)', cursor: 'pointer', fontWeight: '600' }}
+              >
+                + label
+              </button>
+            ) : null}
+
+            {showLabelPicker && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 300, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', minWidth: '200px', padding: '6px' }}
+              >
+                {currentLabel && (
+                  <button onClick={() => selectLabel('')} style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--muted)', fontWeight: '600', textAlign: 'left' }} onMouseEnter={e => e.currentTarget.style.background='var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                    ✕ No label
+                  </button>
+                )}
+
+                {projectLabels.map(l => (
+                  <div key={l.id} style={{ display: 'flex', alignItems: 'center', borderRadius: '8px' }} onMouseEnter={e => e.currentTarget.style.background='var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                    <button onClick={() => selectLabel(l.id)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: 'var(--text)', textAlign: 'left' }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, flexShrink: 0, display: 'inline-block' }} />
+                      {l.name}
+                      {l.id === task.badge && <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '11px' }}>✓</span>}
+                    </button>
+                    <button onClick={(e) => deleteLabel(e, l.id)} style={{ padding: '4px 8px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: '11px' }} title="Delete label">✕</button>
+                  </div>
+                ))}
+
+                {projectLabels.length === 0 && !creatingLabel && (
+                  <div style={{ padding: '8px 10px', fontSize: '12px', color: 'var(--faint)' }}>No labels yet</div>
+                )}
+
+                {!creatingLabel ? (
+                  <button onClick={() => setCreatingLabel(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--accent)', fontWeight: '700', marginTop: '2px' }} onMouseEnter={e => e.currentTarget.style.background='var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                    + Create label
+                  </button>
+                ) : (
+                  <div style={{ padding: '8px', borderTop: projectLabels.length > 0 ? '1px solid var(--border)' : 'none', marginTop: projectLabels.length > 0 ? '4px' : 0 }}>
+                    <input
+                      autoFocus
+                      value={newLabelName}
+                      onChange={e => setNewLabelName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveNewLabel(); if (e.key === 'Escape') setCreatingLabel(false); }}
+                      placeholder="Label name"
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: '12px', boxSizing: 'border-box', marginBottom: '8px', outline: 'none' }}
+                    />
+                    <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                      {LABEL_COLORS.map(c => (
+                        <button key={c} onClick={() => setNewLabelColor(c)} style={{ width: 20, height: 20, borderRadius: '50%', background: c, border: 'none', cursor: 'pointer', outline: newLabelColor === c ? '2px solid white' : 'none', outlineOffset: '1px' }} />
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button onClick={saveNewLabel} disabled={savingLabel || !newLabelName.trim()} style={{ flex: 1, padding: '6px', borderRadius: '8px', background: 'var(--accent)', border: 'none', color: '#000', fontSize: '12px', fontWeight: '800', cursor: savingLabel || !newLabelName.trim() ? 'default' : 'pointer', opacity: savingLabel || !newLabelName.trim() ? 0.5 : 1 }}>
+                        {savingLabel ? '…' : 'Save'}
+                      </button>
+                      <button onClick={() => { setCreatingLabel(false); setNewLabelName(''); }} style={{ padding: '6px 10px', borderRadius: '8px', background: 'var(--surface2)', border: 'none', color: 'var(--muted)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         
         {!isEditing && (
           <div className="task-meta-row">

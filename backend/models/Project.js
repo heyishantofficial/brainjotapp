@@ -10,6 +10,12 @@ const fileSchema = new mongoose.Schema({
   uploaded: String,
 }, { _id: false });
 
+const labelSchema = new mongoose.Schema({
+  id: String,
+  name: String,
+  color: String,
+}, { _id: false });
+
 const collaboratorSchema = new mongoose.Schema({
   id: String,
   userId: String,
@@ -25,7 +31,7 @@ const taskSchema = new mongoose.Schema({
   id: String,
   text: String,
   done: Boolean,
-  badge: { type: String, default: 'Custom' },
+  badge: { type: String, default: '' },
   notes: { type: String, default: '' },
   richNotes: { type: String, default: '' },
   files: [fileSchema],
@@ -58,6 +64,7 @@ const projectSchema = new mongoose.Schema({
   richNotes: { type: String, default: '' },
   files: [fileSchema],
   collaborators: [collaboratorSchema],
+  labels: [labelSchema],
   archived: { type: Boolean, default: false },
   spaceId: { type: String, default: '' },
   ownerId: { type: String, index: true },
