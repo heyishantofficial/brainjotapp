@@ -1175,9 +1175,13 @@ router.post('/', async (req, res, next) => {
   if (action === 'mark_notification_read') {
     const { notifId } = req.body || {};
     if (notifId) {
-      await Notification.updateOne({ id: notifId, toUserId: userId, status: { $nin: ['pending'] } }, { status: 'read' });
+      await Notification.updateOne({ id: notifId, toUserId: userId }, { status: 'read' });
     } else {
-      await Notification.updateMany({ toUserId: userId, status: { $nin: ['pending', 'accepted', 'denied'] } }, { status: 'read' });
+      // Mark all read except pending collab invites (user still needs to respond to those)
+      await Notification.updateMany(
+        { toUserId: userId, $or: [{ type: { $ne: 'collab_invite' } }, { status: { $ne: 'pending' } }] },
+        { status: 'read' }
+      );
     }
     res.json({ ok: true });
     return;

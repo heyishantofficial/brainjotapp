@@ -140,6 +140,7 @@ function NotifRow({ notif, onRespond, onNavigate }) {
 
 export default function NotificationModal({ isOpen, onClose, notifications, onRefresh, onNavigate }) {
   const modalRef = useRef(null);
+  const [markingAll, setMarkingAll] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e) => { if (e.key === 'Escape' && isOpen) onClose(); };
@@ -147,19 +148,21 @@ export default function NotificationModal({ isOpen, onClose, notifications, onRe
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Mark non-pending as read when panel opens
-  useEffect(() => {
-    if (isOpen && notifications.some(n => n.status !== 'pending' && n.status !== 'read' && n.status !== 'accepted' && n.status !== 'denied')) {
-      api('mark_notification_read', {});
-    }
-  }, [isOpen, notifications]);
-
   const handleRespond = async (notifId, accept) => {
     await api('respond_collab_invite', { notifId, accept });
     onRefresh();
   };
 
+  const handleMarkAllRead = async () => {
+    setMarkingAll(true);
+    await api('mark_notification_read', {});
+    await onRefresh();
+    setMarkingAll(false);
+  };
+
   const pendingCount = notifications.filter(n => n.status === 'pending').length;
+  // Non-invite pending = unread mentions, comments, assignments (can be bulk-cleared)
+  const clearableCount = notifications.filter(n => n.status === 'pending' && n.type !== 'collab_invite').length;
 
   return (
     <AnimatePresence>
@@ -190,7 +193,18 @@ export default function NotificationModal({ isOpen, onClose, notifications, onRe
                 </h2>
                 <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>Invites, mentions and activity</div>
               </div>
-              <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '20px' }}>✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {clearableCount > 0 && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    disabled={markingAll}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: markingAll ? 'default' : 'pointer', fontSize: '12px', fontWeight: '700', opacity: markingAll ? 0.5 : 1, whiteSpace: 'nowrap' }}
+                  >
+                    {markingAll ? '…' : 'Mark all read'}
+                  </button>
+                )}
+                <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '20px' }}>✕</button>
+              </div>
             </div>
 
             <div style={{ maxHeight: '420px', overflowY: 'auto' }}>
