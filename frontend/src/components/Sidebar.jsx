@@ -156,7 +156,16 @@ export default function Sidebar({
   };
 
   // ── Drag & drop space reorder ─────────────────────────────────────
-  const handleSpaceDragStart = (e, sid) => { e.dataTransfer.setData('spaceId', sid); e.dataTransfer.effectAllowed = 'move'; };
+  const handleSpaceDragStart = (e, sid, title, color) => {
+    e.dataTransfer.setData('spaceId', sid);
+    e.dataTransfer.effectAllowed = 'move';
+    const pill = document.createElement('div');
+    pill.style.cssText = 'position:fixed;left:-9999px;top:0;display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#f5f5f5;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.15);box-shadow:0 4px 16px rgba(0,0,0,0.5);white-space:nowrap';
+    pill.innerHTML = `<span style="width:8px;height:8px;border-radius:3px;background:${color};display:inline-block;flex-shrink:0"></span><span>${title}</span>`;
+    document.body.appendChild(pill);
+    e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
+    requestAnimationFrame(() => document.body.removeChild(pill));
+  };
   const handleSpaceDragOver  = (e) => { e.preventDefault(); e.currentTarget.classList.add('drop-target'); };
   const handleSpaceDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
   const handleSpaceDrop      = async (e, targetSid) => {
@@ -218,7 +227,7 @@ export default function Sidebar({
                   style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px', cursor: 'grab' }}
                   onContextMenu={e => { e.preventDefault(); setSpaceCtxMenu({ open: true, x: e.clientX, y: e.clientY, space }); }}
                   draggable="true"
-                  onDragStart={e => handleSpaceDragStart(e, space.id)}
+                  onDragStart={e => handleSpaceDragStart(e, space.id, space.title, space.color)}
                   onDragOver={handleSpaceDragOver}
                   onDragLeave={handleSpaceDragLeave}
                   onDrop={e => handleSpaceDrop(e, space.id)}
