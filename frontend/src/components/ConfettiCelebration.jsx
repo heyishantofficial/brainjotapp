@@ -21,7 +21,7 @@ export default function ConfettiCelebration({ onDone }) {
       const randomSound = SOUND_LIBRARY[Math.floor(Math.random() * SOUND_LIBRARY.length)];
       const audio = new Audio(randomSound);
       audio.volume = 0.6;
-      audio.play().catch(e => console.error('Audio play failed:', e));
+      audio.play().catch(() => {});
       audioPlayedRef.current = true;
     }
 
@@ -121,15 +121,6 @@ export default function ConfettiCelebration({ onDone }) {
         <div style={{ fontSize: '100px', filter: 'drop-shadow(0 0 30px rgba(212,255,50,0.6))' }}>🎉</div>
       </div>
 
-      <style>{`
-        @keyframes celebrate-center {
-          0% { transform: scale(0.2); opacity: 0; }
-          15% { transform: scale(1.2); opacity: 1; }
-          25% { transform: scale(1); opacity: 1; }
-          80% { transform: scale(1); opacity: 1; }
-          100% { transform: scale(0.8) translateY(-50px); opacity: 0; }
-        }
-      `}</style>
     </div>
   );
 }

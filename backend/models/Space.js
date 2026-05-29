@@ -21,6 +21,7 @@ const spaceSchema = new mongoose.Schema({
   collaborators: { type: [spaceCollaboratorSchema], default: [] },
   inviteToken: { type: String, default: '' },
   inviteLinkRole: { type: String, default: 'editor' },
+  inviteTokenExpiry: { type: Date, default: null },
 });
 
 module.exports = mongoose.model('Space', spaceSchema);

@@ -13,7 +13,7 @@ export default function Toast({ toast, onClear }) {
   if (!toast?.message) return null;
 
   return (
-    <div className={`toast show`} id="toast">
+    <div className={`toast show`} id="toast" role="status" aria-live="polite" aria-atomic="true">
       <span>{toast.message}</span>
       {toast.action && (
         <button 

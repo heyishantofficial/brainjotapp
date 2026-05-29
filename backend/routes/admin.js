@@ -5,6 +5,13 @@ const Project = require('../models/Project');
 const Space = require('../models/Space');
 const Feedback = require('../models/Feedback');
 const requireAdmin = require('../middleware/requireAdmin');
+const { deleteUserFiles } = require('../utils/storage');
+
+async function auditLog(db, adminId, action, target, meta = {}) {
+  try {
+    await db.collection('audit_log').insertOne({ adminId, action, target, meta, timestamp: new Date() });
+  } catch { /* never let audit failure break the response */ }
+}
 
 const router = express.Router();
 router.use(requireAdmin);
@@ -42,7 +49,8 @@ router.get('/stats', async (req, res) => {
       dbSizeMB: (dbStats.dataSize / 1024 / 1024).toFixed(2),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -59,7 +67,8 @@ router.get('/users', async (req, res) => {
       users: users.map(u => ({ ...u, projectCount: pcMap[u.id] || 0 })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -74,9 +83,12 @@ router.post('/users/grant', async (req, res) => {
       { new: true }
     );
     if (!user) return res.status(404).json({ error: 'No user with that email' });
+    const db = mongoose.connection.db;
+    await auditLog(db, req.session.userId, 'grant_admin', user.id, { email: user.email });
     res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -88,9 +100,18 @@ router.post('/users/:id/revoke', async (req, res) => {
     }
     const user = await User.findOneAndUpdate({ id: req.params.id }, { role: 'user' }, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });
+    // Force-expire all sessions for this user so the revocation takes effect immediately
+    const db = mongoose.connection.db;
+    const allSessions = await db.collection('sessions').find({}).toArray();
+    const toDelete = allSessions
+      .filter(s => { try { return JSON.parse(s.session).userId === req.params.id; } catch { return false; } })
+      .map(s => s._id);
+    if (toDelete.length) await db.collection('sessions').deleteMany({ _id: { $in: toDelete } });
+    await auditLog(db, req.session.userId, 'revoke_admin', req.params.id, { email: user.email });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -101,6 +122,10 @@ router.delete('/users/:id', async (req, res) => {
     if (targetId === req.session.userId) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
+    const targetUser = await User.findOne({ id: targetId }).select('email -_id').lean();
+    // Delete stored files before removing documents
+    const userProjects = await Project.find({ ownerId: targetId }).select('files tasks').lean();
+    await deleteUserFiles(targetId, userProjects);
     await Promise.all([
       User.deleteOne({ id: targetId }),
       Project.deleteMany({ ownerId: targetId }),
@@ -116,9 +141,11 @@ router.delete('/users/:id', async (req, res) => {
     if (sessionIds.length) {
       await db.collection('sessions').deleteMany({ _id: { $in: sessionIds } });
     }
+    await auditLog(db, req.session.userId, 'delete_user', targetId, { email: targetUser?.email });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -152,7 +179,8 @@ router.get('/sessions', async (req, res) => {
 
     res.json({ sessions });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -160,10 +188,14 @@ router.get('/sessions', async (req, res) => {
 router.delete('/sessions/:id', async (req, res) => {
   try {
     const db = mongoose.connection.db;
-    await db.collection('sessions').deleteOne({ _id: req.params.id });
+    // connect-mongo v6 stores sessions with a string _id (the session ID)
+    const result = await db.collection('sessions').deleteOne({ _id: req.params.id });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Session not found or already expired' });
+    await auditLog(db, req.session.userId, 'force_logout_session', req.params.id, {});
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -178,7 +210,8 @@ router.get('/feedback', async (req, res) => {
       })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -186,9 +219,12 @@ router.get('/feedback', async (req, res) => {
 router.delete('/feedback/:id', async (req, res) => {
   try {
     await Feedback.deleteOne({ id: req.params.id });
+    const db = mongoose.connection.db;
+    await auditLog(db, req.session.userId, 'delete_feedback', req.params.id, {});
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -229,7 +265,8 @@ router.get('/system', async (req, res) => {
       nodeEnv: process.env.NODE_ENV || 'development',
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -369,7 +406,8 @@ router.get('/analytics', async (req, res) => {
       recentSignups,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[admin]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

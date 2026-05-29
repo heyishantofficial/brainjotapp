@@ -10,6 +10,7 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [usernameStatus, setUsernameStatus] = useState(null); // null | 'checking' | 'available' | 'taken' | string (error)
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
   const debounceRef = useRef(null);
 
   // Auto-suggest username from name
@@ -57,7 +58,7 @@ export default function LoginScreen({ onLoginSuccess }) {
     }
   };
 
-  const switchMode = (next) => { setMode(next); setError(''); setUsernameStatus(null); };
+  const switchMode = (next) => { setMode(next); setError(''); setUsernameStatus(null); setShowForgot(false); };
 
   const unHint = (() => {
     if (!username || mode !== 'register') return null;
@@ -86,6 +87,7 @@ export default function LoginScreen({ onLoginSuccess }) {
               type="text"
               placeholder="Your name"
               value={name}
+              autoComplete="name"
               onChange={e => setName(e.target.value)}
             />
           </div>
@@ -97,6 +99,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             type="email"
             placeholder="you@example.com"
             value={email}
+            autoComplete="email"
             onChange={e => setEmail(e.target.value)}
           />
         </div>
@@ -107,8 +110,9 @@ export default function LoginScreen({ onLoginSuccess }) {
             type="password"
             placeholder="••••••••"
             value={password}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !mode === 'register' && doSubmit()}
+            onKeyDown={e => e.key === 'Enter' && mode !== 'register' && doSubmit()}
           />
         </div>
 
@@ -121,6 +125,7 @@ export default function LoginScreen({ onLoginSuccess }) {
                 type="text"
                 placeholder="yourhandle"
                 value={username}
+                autoComplete="username"
                 style={{ paddingLeft: '26px' }}
                 onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))}
                 onKeyDown={e => e.key === 'Enter' && doSubmit()}
@@ -136,10 +141,27 @@ export default function LoginScreen({ onLoginSuccess }) {
         )}
 
         <button className="btn-primary" onClick={doSubmit} disabled={loading}>
-          {loading ? '...' : mode === 'login' ? 'Sign in' : 'Create account'}
+          {loading ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : mode === 'login' ? 'Sign in' : 'Create account'}
         </button>
 
         {error && <div className="login-err" style={{ display: 'block' }}>{error}</div>}
+
+        {mode === 'login' && (
+          <div style={{ textAlign: 'center', marginTop: '10px' }}>
+            {!showForgot ? (
+              <button
+                style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '13px', padding: 0, textDecoration: 'underline' }}
+                onClick={() => setShowForgot(true)}
+              >
+                Forgot password?
+              </button>
+            ) : (
+              <div style={{ fontSize: '13px', color: 'var(--muted)', background: 'var(--surface2)', borderRadius: '10px', padding: '10px 14px', lineHeight: '1.5' }}>
+                Password reset is not available via email yet. Contact your workspace admin or reach out to support.
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '13px', color: 'var(--text-muted)' }}>
           {mode === 'login' ? (

@@ -228,9 +228,13 @@ export default function SpaceView({
                 onClick={() => onOpenProject(t.projectId)}
                 style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', scrollSnapAlign: 'start', minWidth: 0 }}
               >
-                <div
+                <button
+                  role="checkbox"
+                  aria-checked={t.done}
+                  aria-label="Toggle task done"
+                  tabIndex={0}
                   onClick={e => handleToggleFocusTask(e, t.projectId, t.id)}
-                  style={{ width: '24px', height: '24px', borderRadius: '8px', border: '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: '24px', height: '24px', borderRadius: '8px', border: '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', padding: 0, cursor: 'pointer' }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '16px', fontWeight: '800', lineHeight: '1.2', color: '#000', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.3px' }}>{t.text}</div>
@@ -290,10 +294,6 @@ export default function SpaceView({
         )}
       </div>
 
-      <style>{`
-        .focus-scroll-container::-webkit-scrollbar { display: none; }
-        .focus-task-card:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 15px 35px rgba(0,0,0,0.15); }
-      `}</style>
     </div>
   );
 }

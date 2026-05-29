@@ -7,7 +7,8 @@ export function CountUp({ value }) {
   const prevValueRef = useRef(0);
 
   useEffect(() => {
-    let start = prevValueRef.current;
+    let raf;
+    const start = prevValueRef.current;
     const end = value;
     const duration = 1200;
     const startTime = performance.now();
@@ -17,11 +18,12 @@ export function CountUp({ value }) {
       const progress = Math.min(elapsed / duration, 1);
       const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
       setDisplayValue(Math.floor(start + (end - start) * easeProgress));
-      if (progress < 1) requestAnimationFrame(animate);
-      else prevValueRef.current = end;
+      if (progress < 1) { raf = requestAnimationFrame(animate); }
+      else { prevValueRef.current = end; }
     };
 
-    requestAnimationFrame(animate);
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
   }, [value]);
 
   return <>{displayValue}</>;
@@ -123,11 +125,6 @@ export default function ProjectCard({ p, onOpenProject, onReorder, projectProgre
         </div>
       </div>
 
-      <style>{`
-        .quick-add-section { opacity: 0; transform: translateY(8px); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); pointer-events: none; }
-        .proj-card:hover .quick-add-section { opacity: 1; transform: translateY(0); pointer-events: auto; }
-        .quick-add-box:focus-within { background: rgba(255,255,255,0.4) !important; border-color: rgba(255,255,255,0.6) !important; }
-      `}</style>
     </div>
   );
 }

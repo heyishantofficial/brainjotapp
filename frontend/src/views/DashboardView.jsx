@@ -129,6 +129,16 @@ export default function DashboardView({
   const topFocusTasks = focusTasks.sort((a, b) => b.score - a.score).slice(0, 8);
   const overallPct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
 
+  const focusBadgeLabel = (() => {
+    const overdueCount = topFocusTasks.filter(t => t.isOverdue).length;
+    if (overdueCount > 0) return { text: `${overdueCount} OVERDUE`, color: '#ff4c4c' };
+    const urgentCount = topFocusTasks.filter(t => t.priority === 'urgent').length;
+    if (urgentCount > 0) return { text: `${urgentCount} URGENT`, color: 'var(--accent)' };
+    const dueSoonCount = topFocusTasks.filter(t => t.deadline).length;
+    if (dueSoonCount > 0) return { text: `${dueSoonCount} DUE SOON`, color: '#f59e0b' };
+    return { text: `${topFocusTasks.length} TASKS`, color: 'var(--accent)' };
+  })();
+
   const projectProgress = (p) => {
     if (!p.tasks || p.tasks.length === 0) return 0;
     return Math.round(p.tasks.filter(t => t.done).length / p.tasks.length * 100);
@@ -149,11 +159,6 @@ export default function DashboardView({
 
   const handleToggleFocusTask = async (e, pId, tId) => {
     e.stopPropagation();
-    const sharedProj = sharedProjects.find(p => p.id === pId);
-    if (sharedProj) {
-      const task = sharedProj.tasks?.find(t => t.id === tId);
-      if (task) { task.done = !task.done; onReorder(); return; }
-    }
     await api('task_toggle', { projectId: pId, taskId: tId });
     onReorder();
   };
@@ -217,7 +222,7 @@ export default function DashboardView({
           <div className="focus-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h2 style={{ fontSize: 'min(24px, 6vw)', fontWeight: '800', letterSpacing: '-0.8px', margin: 0 }}>Today's Focus</h2>
-              <div style={{ background: 'var(--accent)', color: '#000', fontSize: '10px', fontWeight: '900', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap' }}>{topFocusTasks.length} URGENT</div>
+              <div style={{ background: focusBadgeLabel.color, color: focusBadgeLabel.color === 'var(--accent)' ? '#000' : '#fff', fontSize: '10px', fontWeight: '900', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap' }}>{focusBadgeLabel.text}</div>
             </div>
             {topFocusTasks.length > 1 && (
               <span className="scroll-hint" style={{ fontSize: '12px', fontWeight: '700', color: 'var(--muted)', whiteSpace: 'nowrap' }}>Scroll for more ›</span>
@@ -231,7 +236,7 @@ export default function DashboardView({
                 onClick={() => t.isShared ? onOpenSharedProject(t.projectId) : onOpenProject(t.projectId)}
                 style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', scrollSnapAlign: 'start', minWidth: 0 }}
               >
-                <div className="task-check" onClick={e => handleToggleFocusTask(e, t.projectId, t.id)} style={{ width: '24px', height: '24px', borderRadius: '8px', border: '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}></div>
+                <button role="checkbox" aria-checked={t.done} aria-label="Toggle task done" tabIndex={0} className="task-check" onClick={e => handleToggleFocusTask(e, t.projectId, t.id)} style={{ width: '24px', height: '24px', borderRadius: '8px', border: '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', padding: 0, cursor: 'pointer' }}></button>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '16px', fontWeight: '800', lineHeight: '1.2', color: '#000', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.3px' }}>{t.text}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
@@ -249,7 +254,14 @@ export default function DashboardView({
       <div className="view active" id="view-dashboard" style={{ paddingTop: 0 }}>
         <h2 style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '-0.8px', marginBottom: '24px' }}>Spaces</h2>
         {spaces.length === 0 ? (
-          <div style={{ color: 'var(--faint)', fontSize: '14px', padding: '40px 0' }}>No spaces yet. Create one from the sidebar.</div>
+          <div style={{ textAlign: 'center', padding: '56px 0', color: 'var(--faint)' }}>
+            <div style={{ fontSize: '40px', marginBottom: '16px', opacity: 0.4 }}>🗂</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--muted)', marginBottom: '8px' }}>No spaces yet</div>
+            <div style={{ fontSize: '13px', lineHeight: '1.6' }}>
+              Spaces help you group related projects.<br />
+              Click <strong style={{ color: 'var(--text)' }}>+ Spaces</strong> in the sidebar to create your first one.
+            </div>
+          </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginBottom: '56px' }}>
             {spaces.map(s => (
@@ -267,7 +279,7 @@ export default function DashboardView({
                 <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '16px' }}>Spaces</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
                   {sharedSpaces.map(s => (
-                    <SpaceCard key={s.id} space={s} projects={s.projects || []} onOpenSpace={() => onOpenSharedSpace(s.id)} sharedBy={s.sharedBy} />
+                    <SpaceCard key={s.id} space={s} projects={s.projects || []} onOpenSpace={() => onOpenSharedSpace(s.id)} sharedBy={s.ownerInfo?.name} />
                   ))}
                 </div>
               </div>
@@ -289,11 +301,6 @@ export default function DashboardView({
         )}
       </div>
 
-      <style>{`
-        .focus-scroll-container::-webkit-scrollbar { display: none; }
-        .focus-task-card:hover { transform: translateY(-4px) scale(1.02); box-shadow: 0 15px 35px rgba(0,0,0,0.15); }
-        .focus-task-card .task-check:hover { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.4); }
-      `}</style>
     </div>
   );
 }

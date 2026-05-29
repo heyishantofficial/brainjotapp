@@ -12,7 +12,11 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
       config.data = body;
     }
     if (import.meta.env.DEV) {
-      console.log(`[API CALL] ${method} ${action}`, body);
+      const SENSITIVE = ['password', 'currentPassword', 'newPassword'];
+      const safeBody = body && SENSITIVE.some(k => k in body)
+        ? Object.fromEntries(Object.entries(body).map(([k, v]) => [k, SENSITIVE.includes(k) ? '***' : v]))
+        : body;
+      console.log(`[API CALL] ${method} ${action}`, safeBody);
     }
     const res = await apiInstance(config);
     return res.data;

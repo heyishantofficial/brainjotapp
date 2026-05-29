@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
 import Avatar from './Avatar';
+import DialogModal from './DialogModal';
 
 const ROLE_LABELS = {
   editor: { label: 'Editor', desc: 'Can add, edit & complete tasks', icon: '✏️', color: '#6366f1' },
-  commenter: { label: 'Commenter', desc: 'Can view tasks and add comments', icon: '💬', color: '#10b981' },
   viewer: { label: 'Viewer', desc: 'Can view tasks and notes only',   icon: '👁',  color: '#8b5cf6' },
 };
 
-export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast }) {
+export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast, currentUser }) {
   const [activeTab, setActiveTab] = useState('members');
   const [emailInput, setEmailInput] = useState('');
   const [role, setRole] = useState('editor');
+  const [removeDialog, setRemoveDialog] = useState({ open: false, collaborator: null });
   const [inviteMsg, setInviteMsg] = useState('');
   const [changingRoleId, setChangingRoleId] = useState(null);
   // Invite link state
@@ -22,7 +23,30 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
   const [linkCopied, setLinkCopied] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
 
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    const prev = document.activeElement;
+    el.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')[0]?.focus();
+    const trap = (e) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const focusable = Array.from(el.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'));
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey ? document.activeElement === first : document.activeElement === last) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+    };
+    el.addEventListener('keydown', trap);
+    return () => { el.removeEventListener('keydown', trap); prev?.focus(); };
+  }, [onClose]);
+
   const collabs = project?.collaborators || [];
+  const ownerInitials = (currentUser?.name || 'YO').split(' ').filter(Boolean).map(n => n[0].toUpperCase()).join('').slice(0, 2) || 'YO';
 
   const submit = async () => {
     if (!emailInput.trim()) { setInviteMsg('Enter an email address'); return; }
@@ -40,6 +64,7 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
 
   const removeCollab = async (cid) => {
     await api('remove_collaborator', { projectId, collaboratorId: cid });
+    setRemoveDialog({ open: false, collaborator: null });
     onUpdate();
     onToast('Collaborator removed');
   };
@@ -72,12 +97,12 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
   };
 
   return (
-    <div className="modal-bg open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal collab-modal">
+    <div className="modal-bg open" role="presentation" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal collab-modal" role="dialog" aria-modal="true" aria-labelledby="collab-modal-title" ref={dialogRef}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div className="modal-title" style={{ margin: 0 }}>
+          <div className="modal-title" id="collab-modal-title" style={{ margin: 0 }}>
             👥 Collaborators
             {collabs.length > 0 && (
               <span style={{ marginLeft: '8px', fontSize: '13px', fontWeight: '700', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 8px', borderRadius: '20px' }}>
@@ -98,9 +123,9 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
         {activeTab === 'members' && (
           <div style={{ marginTop: '16px' }}>
             <div className="collab-member-row">
-              <div className="collab-member-avatar" style={{ background: '#D4FF32', color: '#000' }}>YO</div>
+              <div className="collab-member-avatar" style={{ background: '#D4FF32', color: '#000' }}>{ownerInitials}</div>
               <div className="collab-member-info">
-                <div className="collab-member-name">You (Owner)</div>
+                <div className="collab-member-name">{currentUser?.name || 'You'} (Owner)</div>
                 <div className="collab-member-email">Project owner</div>
               </div>
               <div className="collab-role-badge" style={{ background: 'rgba(212,255,50,0.1)', color: '#D4FF32', borderColor: 'rgba(212,255,50,0.2)' }}>
@@ -153,12 +178,21 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
                       </div>
                     )}
                   </div>
-                  <button className="collab-remove-btn" onClick={() => removeCollab(c.id)} title="Remove collaborator">✕</button>
+                  <button className="collab-remove-btn" onClick={() => setRemoveDialog({ open: true, collaborator: c })} title="Remove collaborator" aria-label={`Remove ${c.name}`}>✕</button>
                 </div>
               );
             })}
           </div>
         )}
+
+        <DialogModal
+          isOpen={removeDialog.open}
+          type="confirm"
+          title="Remove collaborator"
+          message={`Remove ${removeDialog.collaborator?.name} from this project? They will lose access immediately.`}
+          onConfirm={() => removeCollab(removeDialog.collaborator?.id)}
+          onCancel={() => setRemoveDialog({ open: false, collaborator: null })}
+        />
 
         {/* ── TAB: INVITE ── */}
         {activeTab === 'invite' && (

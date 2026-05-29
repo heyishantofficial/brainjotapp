@@ -4,24 +4,29 @@ services:
   mongodb:
     image: mongo:latest
     container_name: brainjot-mongodb
-    ports:
-      - "27017:27017"
+    # Port 27017 intentionally not exposed to host — only accessible within Docker network
     volumes:
       - brainjot-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   backend:
     build: ./backend
     container_name: brainjot-backend
     ports:
       - "3001:3001"
+    env_file:
+      - ./backend/.env
     environment:
+      - NODE_ENV=production
       - MONGODB_URI=mongodb://mongodb:27017/brainjot
-      - APP_PASSWORD=ishant2026
-      - APP_SECRET=goals2026secretkey_changeme
-      - SESSION_SECRET=goals2026_secure_session_key
-      - UPLOADS_DIR=uploads
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     volumes:
       - ./backend/uploads:/usr/src/app/uploads
 

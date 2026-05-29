@@ -9,7 +9,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       devOptions: {
-        enabled: true  // allow SW in dev for easy testing
+        enabled: false
       },
       includeAssets: ['icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png'],
       manifest: {
@@ -19,7 +19,7 @@ export default defineConfig({
         theme_color: '#000000',
         background_color: '#000000',
         display: 'standalone',
-        orientation: 'portrait-primary',
+        orientation: 'any',
         start_url: '/',
         scope: '/',
         icons: [
@@ -42,17 +42,16 @@ export default defineConfig({
         ]
       },
       workbox: {
-        // Cache app shell (JS, CSS, HTML) using CacheFirst
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
-            // API calls — NetworkFirst: try live, fall back to cache
+            // API calls — NetworkFirst: try live, fall back to 5-minute stale cache
             urlPattern: /^\/api\//,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'brainjot-api-cache',
               networkTimeoutSeconds: 5,
-              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 }
+              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 5 }
             }
           },
           {
@@ -68,6 +67,17 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-motion': ['framer-motion'],
+          'vendor-socket': ['socket.io-client'],
+          'vendor-dom':    ['dompurify'],
+        }
+      }
+    }
+  },
   server: {
     host: true,
     proxy: {

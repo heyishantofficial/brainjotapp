@@ -218,18 +218,33 @@ export default function Sidebar({
     >
       {/* Logo */}
       <div className="sb-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="logo-text">BrainJot</div>
-          <div
-            className="logo-year"
+          <button
             onClick={onOpenProfile}
-            title="View profile"
-            style={{ cursor: 'pointer', transition: 'opacity 0.15s' }}
-            onMouseEnter={e => e.currentTarget.style.opacity = '0.6'}
-            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-          >{currentUser?.name || ''}</div>
+            title="View your profile"
+            aria-label="Open profile"
+            style={{
+              background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer',
+              color: 'var(--muted)', fontSize: '14px', fontWeight: '500',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              transition: 'color 0.15s', textAlign: 'left', fontFamily: 'inherit',
+              maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--muted)'}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentUser?.name || ''}</span>
+            <span style={{ fontSize: '10px', opacity: 0.5, flexShrink: 0 }}>↗</span>
+          </button>
         </div>
-        <button className="nav-item mobile-only" style={{ width: 'auto', padding: '8px', background: 'transparent' }} onClick={() => onSelect(currentProjectId)} title="Close Sidebar">
+        <button
+          className="nav-item mobile-only"
+          style={{ width: 'auto', padding: '8px', background: 'transparent', flexShrink: 0 }}
+          onClick={() => onSelect(currentProjectId)}
+          aria-label="Close sidebar"
+          title="Close Sidebar"
+        >
           <span style={{ fontSize: '18px' }}>✕</span>
         </button>
       </div>
@@ -274,6 +289,8 @@ export default function Sidebar({
                   <button
                     className={`nav-item ${isSpaceActive ? 'active' : ''}`}
                     onClick={() => handleSpaceNameClick(space)}
+                    aria-expanded={isExpanded}
+                    aria-label={`${space.title} space, ${isExpanded ? 'collapse' : 'expand'}`}
                     style={{ flex: 1, justifyContent: 'flex-start', gap: '8px', borderRadius: '12px', paddingRight: '4px' }}
                   >
                     <span style={{ width: '8px', height: '8px', borderRadius: '3px', background: space.color, flexShrink: 0, display: 'inline-block' }}></span>
@@ -287,28 +304,43 @@ export default function Sidebar({
                     )}
                     <span style={{ fontSize: '11px', color: 'var(--muted)', flexShrink: 0 }}>{isExpanded ? '▾' : '▸'}</span>
                   </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setSpaceCtxMenu({ open: true, x: r.right, y: r.bottom, space }); }}
+                    aria-label={`More options for ${space.title}`}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '6px', borderRadius: '8px', fontSize: '16px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
+                  >⋯</button>
                 </div>
 
 
                 {/* Projects under this space */}
                 {isExpanded && spaceProjects.map(p => (
-                  <button
-                    key={p.id}
-                    className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
-                    onClick={() => onSelect(p.id)}
-                    onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
-                    draggable="true"
-                    onDragStart={e => handleDragStart(e, p.id, p.title, p.color)}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={e => handleDrop(e, p.id)}
-                    style={{ paddingLeft: '28px', fontSize: '13px', opacity: 0.9 }}
-                  >
-                    <span className="nav-dot" style={{ background: p.color }}></span>
-                    <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                      {p.title}
-                    </span>
-                  </button>
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
+                    <button
+                      className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
+                      onClick={() => onSelect(p.id)}
+                      onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
+                      draggable="true"
+                      onDragStart={e => handleDragStart(e, p.id, p.title, p.color)}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={e => handleDrop(e, p.id)}
+                      style={{ paddingLeft: '28px', fontSize: '13px', opacity: 0.9, flex: 1 }}
+                    >
+                      <span className="nav-dot" style={{ background: p.color }}></span>
+                      <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        {p.title}
+                      </span>
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setContextMenu({ open: true, x: r.right, y: r.bottom, project: p }); }}
+                      aria-label={`More options for ${p.title}`}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', fontSize: '14px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                      onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
+                      onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
+                    >⋯</button>
+                  </div>
                 ))}
                 {isExpanded && spaceProjects.length === 0 && (
                   <div style={{ paddingLeft: '28px', fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}>No projects</div>

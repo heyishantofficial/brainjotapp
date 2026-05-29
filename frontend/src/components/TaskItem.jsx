@@ -25,7 +25,6 @@ export default function TaskItem({
   onOpenLightbox,
   highlighted,
   readOnly = false,
-  isCommenter,
   currentUser,
   collaborators = [],
 }) {
@@ -80,17 +79,12 @@ export default function TaskItem({
     setLocalComments(task.comments || []);
   }, [task.comments]);
 
-  // Poll for new comments every 5s while task is open
+  // Fetch comments once when task is opened; real-time updates arrive via Socket.IO project_updated
   useEffect(() => {
     if (!isOpen) return;
-    const poll = async () => {
-      const r = await api('get_task_comments', null, 'GET',
-        `&projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`);
-      if (r?.comments) setLocalComments(r.comments);
-    };
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
+    api('get_task_comments', null, 'GET',
+      `&projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`)
+      .then(r => { if (r?.comments) setLocalComments(r.comments); });
   }, [isOpen, project.id, task.id]);
 
   // Auto-scroll chat to bottom on new messages
@@ -143,14 +137,6 @@ export default function TaskItem({
   const assignees = task.assignees || (task.assignee ? [task.assignee] : []);
   
   const getInitials = (name = '') => name.split(' ').filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join('') || '?';
-  const getAvatarColor = (name = '') => {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
-    return '#' + '00000'.substring(0, 6 - c.length) + c;
-  };
 
   const formatDeadline = (dateStr) => {
     if (!dateStr) return '';
@@ -298,7 +284,11 @@ export default function TaskItem({
             />
           </div>
         ) : (
-          <span className={`task-text-el ${task.done ? 'done' : ''}`} onDoubleClick={(e) => { e.stopPropagation(); if(!readOnly) { setIsEditing(true); setEditText(task.text); } }}>
+          <span
+            className={`task-text-el ${task.done ? 'done' : ''}`}
+            onDoubleClick={(e) => { e.stopPropagation(); if(!readOnly) { setIsEditing(true); setEditText(task.text); } }}
+            title={readOnly ? undefined : 'Double-click to edit'}
+          >
             {task.createdAt && <span style={{fontSize: '11px', color: 'var(--muted)', marginRight: '8px', fontWeight: '500'}}>{new Date(task.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
             {task.text}
           </span>
@@ -597,9 +587,9 @@ export default function TaskItem({
                     </div>
                     <div style={{display: 'flex', gap: '4px'}}>
                       {isImg && (
-                        <button className="btn-tf" onClick={() => onOpenLightbox(f.url.startsWith('http') ? f.url : `http://localhost:3001/${f.url}`)}>View</button>
+                        <button className="btn-tf" onClick={() => onOpenLightbox(f.url.startsWith('http') ? f.url : `/${f.url}`)}>View</button>
                       )}
-                      <a className="btn-tf" href={`http://localhost:3001/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} target="_blank" rel="noreferrer" title="Download">↓</a>
+                      <a className="btn-tf" href={`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} target="_blank" rel="noreferrer" title="Download">↓</a>
                       {!readOnly && <button className="btn-tf del" onClick={() => onDeleteFile(f.id)}>✕</button>}
                     </div>
                   </div>
@@ -672,7 +662,7 @@ export default function TaskItem({
           </div>
 
           {/* Input row */}
-          {(!readOnly || isCommenter) && (
+          {!readOnly && (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
               <div style={{ flex: 1 }}>
                 <MentionInput
@@ -687,16 +677,16 @@ export default function TaskItem({
                 onClick={handleSendComment}
                 disabled={!chatInput.trim()}
                 style={{
-                  width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
+                  height: '40px', borderRadius: '20px', flexShrink: 0, padding: '0 14px',
                   background: chatInput.trim() ? 'var(--accent)' : 'var(--surface2)',
                   color: chatInput.trim() ? '#000' : 'var(--muted)',
                   border: 'none', cursor: chatInput.trim() ? 'pointer' : 'default',
-                  fontSize: '17px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '13px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   transition: 'background 0.15s',
                 }}
-                title="Send"
+                aria-label="Send message"
               >
-                ↑
+                Send
               </button>
             </div>
           )}

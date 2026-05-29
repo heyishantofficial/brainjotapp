@@ -4,50 +4,22 @@ import { api, apiForm } from '../api';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
 import ActivityFeed from '../components/ActivityFeed';
-import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
-import DialogModal from '../components/DialogModal';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CountUp } from '../components/ProjectCard';
 import ConfettiCelebration from '../components/ConfettiCelebration';
 import ProjectModal from '../components/ProjectModal';
 import DOMPurify from 'dompurify';
 
 
 
-function CountUp({ value }) {
-  const [displayValue, setDisplayValue] = useState(0);
-  const prevValueRef = useRef(0);
-  
-  useEffect(() => {
-    let start = prevValueRef.current;
-    const end = value;
-    const duration = 1200; 
-    const startTime = performance.now();
-    
-    const animate = (currentTime) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      const currentVal = Math.floor(start + (end - start) * easeProgress);
-      
-      setDisplayValue(currentVal);
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      } else {
-        prevValueRef.current = end;
-      }
-    };
-    requestAnimationFrame(animate);
-  }, [value]);
-  
-  return <>{displayValue}</>;
-}
-
 export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser }) {
   const [newTaskText, setNewTaskText] = useState('');
-  const [dialogConfig, setDialogConfig] = useState({ open: false, type: '', title: '', message: '', initialValue: '', onConfirm: null });
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [showEditProject, setShowEditProject] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null); // null | { done: number, total: number }
+  const [notesSaveError, setNotesSaveError] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [sortBy, setSortBy] = useState('default');
@@ -178,11 +150,18 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const handleInlineRichNotes = (e) => {
     setNotesStatus('Saving...');
+    setNotesSaveError(false);
     if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
     const html = e.target.innerHTML;
     notesTimerRef.current = setTimeout(async () => {
-      await api('save_project_rich_notes', { projectId: project.id, notes: html });
-      setNotesStatus('Saved');
+      const r = await api('save_project_rich_notes', { projectId: project.id, notes: html });
+      if (r?.ok === false || r?.error) {
+        setNotesSaveError(true);
+        setNotesStatus('Failed to save');
+      } else {
+        setNotesSaveError(false);
+        setNotesStatus('Saved');
+      }
     }, 1000);
   };
 
@@ -351,13 +330,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const handleFileUpload = async (files) => {
     if (!files || files.length === 0) return;
+    setUploadProgress({ done: 0, total: files.length });
     for (let i = 0; i < files.length; i++) {
       const fd = new FormData();
       fd.append('projectId', project.id);
       fd.append('file', files[i]);
       await apiForm('upload', fd);
+      setUploadProgress({ done: i + 1, total: files.length });
     }
     fileInputRef.current.value = '';
+    setUploadProgress(null);
     onUpdate();
   };
 
@@ -455,7 +437,9 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 style={{ background: `${getContrastColor(project.color)}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}
               >
                 <div className="tooltip-content">
-                  {(project.collaborators || []).map(c => c.name).join('\n')}
+                  {(project.collaborators || []).length > 0
+                    ? (project.collaborators || []).map(c => c.name).join('\n')
+                    : 'No collaborators yet — invite someone!'}
                 </div>
                 <div className="project-collab-summary" style={{ margin: 0 }}>
                   <div className="collab-stack" style={{ display: 'flex' }}>
@@ -657,8 +641,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                       onOpenLightbox={onOpenLightbox}
                       highlighted={highlightedTaskId === t.id}
-                      readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
-                      isCommenter={isSharedView && currentUserRole === 'commenter'}
+                      readOnly={isSharedView && currentUserRole === 'viewer'}
                       currentUser={currentUser}
                       collaborators={mentionUsers}
                     />
@@ -707,8 +690,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                           onOpenLightbox={onOpenLightbox}
                           highlighted={highlightedTaskId === t.id}
-                          readOnly={isSharedView && (currentUserRole === 'viewer' || currentUserRole === 'commenter')}
-                          isCommenter={isSharedView && currentUserRole === 'commenter'}
+                          readOnly={isSharedView && currentUserRole === 'viewer'}
                           currentUser={currentUser}
                           collaborators={mentionUsers}
                         />
@@ -723,7 +705,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
           <div className="section-card">
             <div className="section-head">
               <span className="section-head-title">Project notes</span>
-              <span style={{ fontSize: '11px', color: 'var(--faint)' }}>{notesStatus}</span>
+              <span style={{ fontSize: '11px', color: notesSaveError ? '#ef4444' : 'var(--faint)' }}>{notesStatus}</span>
             </div>
             <div className="section-body">
               <div className="notes-wrap" style={{ position: 'relative' }}>
@@ -775,16 +757,28 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 onChange={(e) => handleFileUpload(e.target.files)}
               />
 
+              {uploadProgress && (
+                <div style={{ marginTop: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--muted)', marginBottom: '4px' }}>
+                    <span>Uploading…</span>
+                    <span>{uploadProgress.done}/{uploadProgress.total}</span>
+                  </div>
+                  <div className="upload-progress" style={{ display: 'block' }}>
+                    <div className="upload-progress-fill" style={{ width: `${Math.round(uploadProgress.done / uploadProgress.total * 100)}%` }} />
+                  </div>
+                </div>
+              )}
+
               {images.length > 0 && (
                 <div style={{ marginTop: '14px' }}>
                   <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Images ({images.length})</div>
                   <div className="img-grid">
                     {images.map(f => (
                       <div className="img-thumb" key={f.id}>
-                        <img src={f.url.startsWith('http') ? f.url : `http://localhost:3001/${f.url}`} alt={f.name} loading="lazy" />
+                        <img src={f.url.startsWith('http') ? f.url : `/${f.url}`} alt={f.name} loading="lazy" />
                         <div className="img-thumb-overlay">
-                          <button className="btn-file" onClick={(e) => { e.stopPropagation(); onOpenLightbox(f.url.startsWith('http') ? f.url : `http://localhost:3001/${f.url}`); }}>View</button>
-                          <a className="btn-file" href={`http://localhost:3001/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} onClick={e => e.stopPropagation()} target="_blank" rel="noreferrer" title="Download">↓</a>
+                          <button className="btn-file" onClick={(e) => { e.stopPropagation(); onOpenLightbox(f.url.startsWith('http') ? f.url : `/${f.url}`); }}>View</button>
+                          <a className="btn-file" href={`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} onClick={e => e.stopPropagation()} target="_blank" rel="noreferrer" title="Download">↓</a>
                           <button className="btn-file del" onClick={(e) => { e.stopPropagation(); deleteFile(f.id); }}>Del</button>
                         </div>
                       </div>
@@ -803,7 +797,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                         <div className="file-meta">{f.type.toUpperCase()} · {formatSize(f.size)} · {f.uploaded}</div>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <a className="btn-file" href={`http://localhost:3001/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} target="_blank" rel="noreferrer">↓</a>
+                        <a className="btn-file" href={`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} target="_blank" rel="noreferrer">↓</a>
                         <button className="btn-file del" onClick={() => deleteFile(f.id)}>✕</button>
                       </div>
                     </div>
@@ -829,16 +823,6 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
           </div>
         </div>
       </div>
-
-      <DialogModal 
-        isOpen={dialogConfig.open}
-        type={dialogConfig.type}
-        title={dialogConfig.title}
-        message={dialogConfig.message}
-        initialValue={dialogConfig.initialValue}
-        onConfirm={dialogConfig.onConfirm}
-        onCancel={() => setDialogConfig({ ...dialogConfig, open: false })}
-      />
 
       {showCelebration && (
         <ConfettiCelebration 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io as socketIO } from 'socket.io-client';
-import { AnimatePresence, motion } from 'framer-motion'; // eslint-disable-line no-unused-vars
+import { AnimatePresence, motion } from 'framer-motion';
 import { api } from './api';
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
@@ -14,15 +14,23 @@ import { getContrastColor } from './utils/colors';
 import ProjectModal from './components/ProjectModal';
 import SpaceModal from './components/SpaceModal';
 import SpaceView from './views/SpaceView';
-import WordpadModal from './components/WordpadModal';
 import CollabModal from './components/CollabModal';
 import SpaceCollabModal from './components/SpaceCollabModal';
 import NotificationModal from './components/NotificationModal';
-import FeedbackPanel from './components/FeedbackPanel';
-import InviteLandingView from './views/InviteLandingView';
-import AdminView from './views/AdminView';
 import ProfileView from './views/ProfileView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
+
+// Lazy-loaded: heavy or rarely-used chunks loaded on demand
+const AdminView        = React.lazy(() => import('./views/AdminView'));
+const InviteLandingView = React.lazy(() => import('./views/InviteLandingView'));
+const WordpadModal     = React.lazy(() => import('./components/WordpadModal'));
+const FeedbackPanel    = React.lazy(() => import('./components/FeedbackPanel'));
+
+const Spinner = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#000' }}>
+    <div style={{ width: 32, height: 32, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#D4FF32', borderRadius: '50%', animation: 'bj-spin 0.7s linear infinite' }} />
+  </div>
+);
 
 
 export default function App() {
@@ -71,10 +79,12 @@ export default function App() {
   const appDataRef = useRef({ projects: [] });
   const socketRef = useRef(null);
   const currentRoomRef = useRef(null);
+  const pollFailuresRef = useRef(0);
 
   const loadData = useCallback(async () => {
     try {
       const data = await api('get', null, 'GET');
+      pollFailuresRef.current = 0; // reset on success
       if (data?.spaces && data?.projects) {
         appDataRef.current = data;
         setAppData(data);
@@ -82,34 +92,47 @@ export default function App() {
         if (Array.isArray(data.sharedSpaces)) setSharedSpaces(data.sharedSpaces);
         scheduleDeadlineReminders(() => appDataRef.current.projects || []);
       }
-    } catch {
-      // keep existing appData on failure
+    } catch (err) {
+      // keep existing appData on transient failure
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= 3) {
+        console.error('[poll] loadData failed ' + pollFailuresRef.current + ' consecutive times', err?.message);
+        // Hook point: Sentry.captureMessage('loadData polling failed', { extra: { consecutive: pollFailuresRef.current } });
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Poll notifications and app data every 20 s while logged in
+  // Poll notifications and app data every 20 s — skips hidden tabs to save battery
   useEffect(() => {
     if (!loggedIn) return;
-    const id = setInterval(() => { loadNotifications(); loadData(); }, 20000);
-    return () => clearInterval(id);
+    const tick = () => {
+      if (document.visibilityState === 'visible') { loadNotifications(); loadData(); }
+    };
+    const id = setInterval(tick, 20000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick); };
   }, [loggedIn, loadNotifications, loadData]);
 
-  // Real-time socket connection
+  // Real-time socket connection — WebSocket-first (skips polling upgrade round-trip)
   useEffect(() => {
     if (!loggedIn) {
       socketRef.current?.disconnect();
       socketRef.current = null;
       return;
     }
-    const socket = socketIO({ withCredentials: true });
+    const socket = socketIO({ withCredentials: true, transports: ['websocket'] });
     socketRef.current = socket;
     socket.on('connect', () => {
       if (currentRoomRef.current) socket.emit('join_room', currentRoomRef.current);
     });
-    socket.on('project_updated', () => { loadData(); });
-    return () => { socket.disconnect(); socketRef.current = null; };
+    let debounce;
+    socket.on('project_updated', () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(loadData, 500);
+    });
+    return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
   }, [loggedIn, loadData]);
 
   // Join/leave project room when active project changes
@@ -141,19 +164,9 @@ export default function App() {
   }, [loadData, loadNotifications]);
 
   useEffect(() => {
-    // Theme setup from localStorage
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'light') {
-      document.body.classList.add('theme-light');
-    }
-    
     const params = new URLSearchParams(window.location.search);
     const token = params.get('join');
-    if (token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setInviteToken(token);
-    }
-    
+    if (token) setInviteToken(token);
     checkAuth();
   }, [checkAuth]);
 
@@ -257,7 +270,7 @@ export default function App() {
     }
   };
 
-  if (loading) return null;
+  if (loading) return <Spinner />;
 
   if (inviteToken && !loggedIn) {
     return <LoginScreen onLoginSuccess={(user) => {
@@ -270,7 +283,11 @@ export default function App() {
   }
 
   if (inviteToken && loggedIn) {
-    return <InviteLandingView inviteToken={inviteToken} onAccept={handleAcceptInvite} />;
+    return (
+      <React.Suspense fallback={<Spinner />}>
+        <InviteLandingView inviteToken={inviteToken} onAccept={handleAcceptInvite} />
+      </React.Suspense>
+    );
   }
 
   if (!loggedIn) {
@@ -283,12 +300,17 @@ export default function App() {
     }} />;
   }
 
-  // Admin route gate — navigating to /admin shows the panel only for superadmins
-  if (window.location.pathname === '/admin') {
+  // Admin route gate — navigating to /admin shows the panel only for verified superadmins.
+  // currentUser is populated from the server session (not localStorage), so this check is safe.
+  if (window.location.pathname.startsWith('/admin')) {
     if (currentUser?.role === 'superadmin') {
-      return <AdminView currentUser={currentUser} onLogout={handleLogout} />;
+      return (
+        <React.Suspense fallback={<Spinner />}>
+          <AdminView currentUser={currentUser} onLogout={handleLogout} />
+        </React.Suspense>
+      );
     }
-    // Not an admin — silently redirect to home
+    // Not an admin (or session not yet loaded) — silently redirect to home
     window.history.replaceState({}, '', '/');
   }
 
@@ -300,7 +322,7 @@ export default function App() {
 
   return (
     <div id="app" style={{ display: 'block' }}>
-      <button className={`hamburger ${sidebarOpen ? 'hidden' : ''}`} onClick={() => setSidebarOpen(!sidebarOpen)}>
+      <button className={`hamburger ${sidebarOpen ? 'hidden' : ''}`} onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Open navigation menu" aria-expanded={sidebarOpen}>
         <span></span><span></span><span></span>
       </button>
 
@@ -353,6 +375,7 @@ export default function App() {
             currentUser={currentUser}
             onUserUpdate={(updates) => setCurrentUser(prev => ({ ...prev, ...updates }))}
             onLogout={handleLogout}
+            onOpenAdmin={() => { window.history.pushState({}, '', '/admin'); setShowProfile(false); }}
           />
         )}
         {!showProfile && activeView === 'dashboard' && (
@@ -390,9 +413,9 @@ export default function App() {
         {!showProfile && activeView === 'shared-space' && currentSharedSpace && (
           <SpaceView
             space={currentSharedSpace}
-            projects={(appData.projects || []).filter(p => p.spaceId === currentSharedSpace.id)}
+            projects={(currentSharedSpace.projects || []).filter(p => !p.archived)}
             onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }}
-            onReorder={() => {}}
+            onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
             canAddProject={currentSharedSpace.myRole === 'editor'}
             onOpenCollab={() => {}}
@@ -490,15 +513,17 @@ export default function App() {
       )}
 
       {showWordpad.open && currentProject && (
-        <WordpadModal
-          project={currentProject}
-          taskId={showWordpad.taskId}
-          type={showWordpad.type}
-          initialContent={showWordpad.initialContent}
-          onClose={() => setShowWordpad({ open: false, type: '', taskId: '', initialContent: '' })}
-          onSave={loadData}
-          onToast={toast}
-        />
+        <React.Suspense fallback={null}>
+          <WordpadModal
+            project={currentProject}
+            taskId={showWordpad.taskId}
+            type={showWordpad.type}
+            initialContent={showWordpad.initialContent}
+            onClose={() => setShowWordpad({ open: false, type: '', taskId: '', initialContent: '' })}
+            onSave={loadData}
+            onToast={toast}
+          />
+        </React.Suspense>
       )}
 
       {showCollab.open && (
@@ -509,6 +534,7 @@ export default function App() {
           onUpdate={loadData}
           onUpdateRole={updateProjectCollabRole}
           onToast={toast}
+          currentUser={currentUser}
         />
       )}
 
@@ -520,6 +546,7 @@ export default function App() {
           onUpdate={loadData}
           onUpdateRole={updateSpaceCollabRole}
           onToast={toast}
+          currentUser={currentUser}
         />
       )}
 
@@ -531,10 +558,12 @@ export default function App() {
         onNavigate={handleNotifNavigate}
       />
 
-      <FeedbackPanel
-        isOpen={showFeedback}
-        onClose={() => setShowFeedback(false)}
-      />
+      <React.Suspense fallback={null}>
+        <FeedbackPanel
+          isOpen={showFeedback}
+          onClose={() => setShowFeedback(false)}
+        />
+      </React.Suspense>
 
       <CommandPalette 
         projects={appData.projects} 

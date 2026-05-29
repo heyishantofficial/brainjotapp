@@ -71,6 +71,7 @@ const projectSchema = new mongoose.Schema({
   __orderRank: { type: Number, default: 0 },
   inviteToken: { type: String, default: '' },
   inviteLinkRole: { type: String, default: 'editor' },
+  inviteTokenExpiry: { type: Date, default: null },
 });
 
 module.exports = mongoose.model('Project', projectSchema);

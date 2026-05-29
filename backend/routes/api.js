@@ -4,8 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
-const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const multerS3 = require('multer-s3');
 const { Resend } = require('resend');
 const Project = require('../models/Project');
@@ -13,6 +13,8 @@ const Space = require('../models/Space');
 const User = require('../models/User');
 const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
+const { UPLOADS_DIR, useR2, s3, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -20,6 +22,10 @@ function emitProjectUpdate(req, projectId) {
   req.app.get('io')?.to(`project:${projectId}`).emit('project_updated', { projectId });
 }
 
+const VALID_COLLAB_ROLES = ['editor', 'viewer'];
+const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+function isValidColor(c) { return typeof c === 'string' && HEX_COLOR_RE.test(c); }
+function safeIcon(icon, fallback = '📁') { return typeof icon === 'string' ? [...icon].slice(0, 4).join('') || fallback : fallback; }
 const APP_URL = process.env.APP_URL || 'https://brainjotapp.up.railway.app';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
@@ -27,11 +33,14 @@ const FROM_EMAIL = process.env.FROM_EMAIL || 'BrainJot <onboarding@resend.dev>';
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTitle }) {
-  if (!resend) return;
+  if (!resend) {
+    logger.warn({ to }, '[email] RESEND_API_KEY not configured — skipping invite');
+    return;
+  }
   const subjectTarget = projectTitle ? `project "${projectTitle}"` : `space "${spaceTitle}"`;
   const displayTarget = projectTitle || spaceTitle;
   try {
-    await resend.emails.send({
+    const result = await resend.emails.send({
       from: FROM_EMAIL,
       to,
       subject: `${inviterName} invited you to collaborate on BrainJot`,
@@ -56,48 +65,27 @@ async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTit
         </div>
       `,
     });
+    logger.info({ to, messageId: result?.id }, '[email] invite_sent');
   } catch (err) {
-    console.error('Email send failed:', err.message);
+    logger.error({ to, message: err.message, status: err.statusCode }, '[email] invite_failed');
+    // Hook point: Sentry.captureException(err, { extra: { to } });
   }
 }
 
-const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 const SALT_ROUNDS = 12;
-
-// ── R2 / S3 storage setup ─────────────────────────────────────────
-const useR2 = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
-
-const s3 = useR2 ? new S3Client({
-  region: 'auto',
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-}) : null;
-
-async function deleteStoredFile(fileRecord) {
-  if (useR2) {
-    try {
-      await s3.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: fileRecord.file }));
-    } catch (_) { /* ignore missing files */ }
-  } else {
-    const fp = path.join(UPLOADS_DIR, fileRecord.file);
-    if (fs.existsSync(fp)) fs.unlinkSync(fp);
-  }
-}
-
-function filePublicUrl(key) {
-  return useR2
-    ? `${process.env.R2_PUBLIC_URL}/${key}`
-    : `uploads/${key}`;
-}
 
 // ── Multer setup ──────────────────────────────────────────────────
 const ALLOWED_EXT = new Set([
   'jpg','jpeg','png','gif','webp','pdf',
   'doc','docx','xls','xlsx','ppt','pptx',
   'mp4','mov','zip','txt','csv',
+]);
+
+// Allowed MIME types for general uploads (maps extension category → allowed MIME prefixes)
+const ALLOWED_MIME_PREFIXES = new Set([
+  'image/', 'video/', 'application/pdf',
+  'application/msword', 'application/vnd.openxmlformats',
+  'application/vnd.ms-', 'application/zip', 'text/',
 ]);
 
 function makeKey(req, file) {
@@ -127,7 +115,8 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
-    if (ALLOWED_EXT.has(ext)) cb(null, true);
+    const mimeOk = [...ALLOWED_MIME_PREFIXES].some(p => file.mimetype.startsWith(p));
+    if (ALLOWED_EXT.has(ext) && mimeOk) cb(null, true);
     else cb(new Error('File type not allowed'));
   },
 });
@@ -146,7 +135,17 @@ const avatarStorage = useR2
       },
       filename: (req, _file, cb) => cb(null, `${req.session.userId}.jpg`),
     });
-const uploadAvatar = multer({ storage: avatarStorage, limits: { fileSize: 2 * 1024 * 1024 } });
+const ALLOWED_AVATAR_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+const ALLOWED_AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter(_req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+    if (ALLOWED_AVATAR_EXT.has(ext) && ALLOWED_AVATAR_MIME.has(file.mimetype)) cb(null, true);
+    else cb(new Error('Avatar must be a JPG, PNG, WebP, or GIF image'));
+  },
+});
 
 function conditionalUpload(req, res, next) {
   const action = req.query.action;
@@ -241,9 +240,38 @@ async function seedDefaultData(userId) {
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: { error: 'Too many attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn({ ip: req.ip, action: req.query.action }, '[rate_limit] auth limiter triggered');
+    res.status(429).json({ error: 'Too many attempts, please try again later' });
+  },
+});
+
+// Per-user rate limit for all authenticated API actions
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  keyGenerator: (req) => req.session?.userId || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn({ ip: req.ip, userId: req.session?.userId, action: req.query.action }, '[rate_limit] api limiter triggered');
+    res.status(429).json({ error: 'Too many requests, please slow down' });
+  },
+});
+
+// Strict rate limit for data export (5 per hour per user)
+const exportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.session?.userId || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn({ ip: req.ip, userId: req.session?.userId }, '[rate_limit] export limiter triggered');
+    res.status(429).json({ error: 'Export limit reached, please try again later' });
+  },
 });
 
 // ── Auth middleware ───────────────────────────────────────────────
@@ -261,8 +289,12 @@ router.get('/download', requireAuth, (req, res) => {
 
   if (!fileUrl) return res.status(400).send('File URL is required');
 
-  // R2 files have a full HTTPS public URL — redirect directly
+  // R2 files have a full HTTPS public URL — only redirect to our own R2 bucket domain
   if (fileUrl.startsWith('https://')) {
+    const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
+    if (!R2_PUBLIC_URL || !fileUrl.startsWith(R2_PUBLIC_URL + '/')) {
+      return res.status(400).send('Invalid file URL');
+    }
     return res.redirect(fileUrl);
   }
 
@@ -282,7 +314,7 @@ router.get('/download', requireAuth, (req, res) => {
 router.use(conditionalUpload);
 
 // ── GET routes ────────────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', apiLimiter, async (req, res) => {
   const action = req.query.action;
 
   if (action === 'check_username') {
@@ -327,10 +359,18 @@ router.get('/', async (req, res) => {
   }
 
   if (action === 'get') {
+    // Keep session role in sync with DB so revocations take effect within one poll cycle
+    const freshUser = await User.findOne({ id: userId }).select('role -_id').lean();
+    if (freshUser) req.session.userRole = freshUser.role || 'user';
     const spaces   = await Space.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
     const projects = await Project.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
     const sharedProjectDocs = await Project.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
     const sharedSpaceDocs   = await Space.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
+    // Fetch projects belonging to shared spaces so the SpaceView can render them
+    const sharedSpaceIds = sharedSpaceDocs.map(s => s.id).filter(Boolean);
+    const sharedSpaceProjectDocs = sharedSpaceIds.length
+      ? await Project.find({ spaceId: { $in: sharedSpaceIds } }).select('-_id -__v').lean()
+      : [];
     // Look up owner info so collaborators can @mention the owner in comments
     const allOwnerIds = [...new Set([...sharedProjectDocs.map(p => p.ownerId), ...sharedSpaceDocs.map(s => s.ownerId)])].filter(Boolean);
     const ownerUsers = allOwnerIds.length ? await User.find({ id: { $in: allOwnerIds } }).select('id name username avatarUrl -_id').lean() : [];
@@ -345,16 +385,21 @@ router.get('/', async (req, res) => {
       spaces: toPlain(spaces),
       projects: toPlain(projects),
       sharedProjects: annotateShared(sharedProjectDocs),
-      sharedSpaces: annotateShared(sharedSpaceDocs),
+      sharedSpaces: annotateShared(sharedSpaceDocs).map(s => ({
+        ...s,
+        projects: sharedSpaceProjectDocs.filter(p => p.spaceId === s.id),
+      })),
     });
     return;
   }
 
   if (action === 'get_feedback') {
+    const isAdmin = req.session.userRole === 'superadmin';
     const raw = await Feedback.find({}).sort({ createdAt: -1 }).limit(200).lean();
     res.json({
-      items: raw.map(({ _id, __v, upvotes, ...rest }) => ({
+      items: raw.map(({ _id, __v, upvotes, userId: feedbackUserId, ...rest }) => ({
         ...rest,
+        ...(isAdmin ? { userId: feedbackUserId } : {}),
         upvoteCount: upvotes.length,
         hasUpvoted: upvotes.includes(userId),
       })),
@@ -379,7 +424,7 @@ router.get('/', async (req, res) => {
 });
 
 // ── POST routes ───────────────────────────────────────────────────
-router.post('/', async (req, res, next) => {
+router.post('/', apiLimiter, async (req, res, next) => {
   const action = req.query.action;
 
   // ── register ──
@@ -392,6 +437,9 @@ router.post('/', async (req, res, next) => {
         }
         if (password.length < 8) {
           return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+          return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
         }
         if (!username?.trim()) {
           return res.status(400).json({ error: 'Username is required' });
@@ -413,8 +461,10 @@ router.post('/', async (req, res, next) => {
         const role = ADMIN_EMAILS.includes(email.toLowerCase().trim()) ? 'superadmin' : 'user';
         const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), username: cleanUsername, passwordHash, role });
         await seedDefaultData(userId);
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = userId;
         req.session.userRole = role;
+        logger.info({ userId, ip: req.ip, role }, '[auth] register_success');
         res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, username: user.username, role, avatarUrl: '' } });
       } catch (err) {
         next(err);
@@ -432,10 +482,12 @@ router.post('/', async (req, res, next) => {
         }
         const user = await User.findOne({ email: email.toLowerCase().trim() });
         if (!user) {
+          logger.warn({ ip: req.ip, reason: 'unknown_email' }, '[auth] login_failure');
           return res.status(401).json({ error: 'Invalid email or password' });
         }
         const match = await bcrypt.compare(password, user.passwordHash);
         if (!match) {
+          logger.warn({ ip: req.ip, userId: user.id, reason: 'wrong_password' }, '[auth] login_failure');
           return res.status(401).json({ error: 'Invalid email or password' });
         }
         // Auto-elevate if email is in ADMIN_EMAILS
@@ -443,8 +495,10 @@ router.post('/', async (req, res, next) => {
           await User.updateOne({ id: user.id }, { role: 'superadmin' });
           user.role = 'superadmin';
         }
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
+        logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] login_success');
         res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {
         next(err);
@@ -492,7 +546,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'update_profile') {
     const { name, email } = req.body;
     const updates = {};
-    if (name?.trim()) updates.name = name.trim();
+    if (name?.trim()) updates.name = name.trim().slice(0, 100);
     if (email?.trim()) {
       const taken = await User.findOne({ email: email.toLowerCase().trim(), id: { $ne: userId } });
       if (taken) { res.status(409).json({ error: 'Email already in use' }); return; }
@@ -523,6 +577,15 @@ router.post('/', async (req, res, next) => {
     const match = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!match) { res.status(401).json({ error: 'Current password is incorrect' }); return; }
     await User.updateOne({ id: userId }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
+    logger.info({ userId, ip: req.ip }, '[audit] change_password');
+    // Invalidate all other active sessions so stolen cookies can't be used after a password change
+    const db = mongoose.connection.db;
+    const allSessions = await db.collection('sessions').find({}).toArray();
+    const toDelete = allSessions
+      .filter(s => { try { return JSON.parse(s.session).userId === userId; } catch { return false; } })
+      .filter(s => s._id.toString() !== req.sessionID)
+      .map(s => s._id);
+    if (toDelete.length) await db.collection('sessions').deleteMany({ _id: { $in: toDelete } });
     res.json({ ok: true });
     return;
   }
@@ -534,11 +597,20 @@ router.post('/', async (req, res, next) => {
     const user = await User.findOne({ id: userId });
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) { res.status(401).json({ error: 'Incorrect password' }); return; }
+    // Delete all stored files before removing documents
+    const userProjects = await Project.find({ ownerId: userId }).select('files tasks').lean();
+    logger.info({ userId, ip: req.ip, projectCount: userProjects.length }, '[audit] delete_account');
+    await deleteUserFiles(userId, userProjects);
     await Promise.all([
       User.deleteOne({ id: userId }),
       Project.deleteMany({ ownerId: userId }),
       Space.deleteMany({ ownerId: userId }),
       Feedback.deleteMany({ userId }),
+      // Remove this user from collaborator lists on projects/spaces they didn't own
+      Project.updateMany({ 'collaborators.userId': userId }, { $pull: { collaborators: { userId } } }),
+      Space.updateMany({ 'collaborators.userId': userId }, { $pull: { collaborators: { userId } } }),
+      // Remove pending notifications to/from this user
+      Notification.deleteMany({ $or: [{ toUserId: userId }, { fromUserId: userId }] }),
     ]);
     req.session.destroy(() => res.json({ ok: true }));
     return;
@@ -546,12 +618,13 @@ router.post('/', async (req, res, next) => {
 
   // ── export_data ──
   if (action === 'export_data') {
-    const [projects, spaces] = await Promise.all([
-      Project.find({ ownerId: userId }).select('-_id -__v').lean(),
-      Space.find({ ownerId: userId }).select('-_id -__v').lean(),
-    ]);
-    res.json({ spaces, projects, exportedAt: new Date().toISOString() });
-    return;
+    return exportLimiter(req, res, async () => {
+      const [projects, spaces] = await Promise.all([
+        Project.find({ ownerId: userId }).select('-_id -__v').lean(),
+        Space.find({ ownerId: userId }).select('-_id -__v').lean(),
+      ]);
+      res.json({ spaces, projects, exportedAt: new Date().toISOString() });
+    });
   }
 
   // ── post_feedback ──
@@ -575,6 +648,7 @@ router.post('/', async (req, res, next) => {
 
   // ── toggle_feedback_status ──
   if (action === 'toggle_feedback_status') {
+    if (req.session.userRole !== 'superadmin') { res.status(403).json({ error: 'Forbidden' }); return; }
     const { feedbackId } = req.body;
     const item = await Feedback.findOne({ id: feedbackId });
     if (!item) { res.status(404).json({ error: 'Not found' }); return; }
@@ -587,13 +661,15 @@ router.post('/', async (req, res, next) => {
   // ── upvote_feedback ──
   if (action === 'upvote_feedback') {
     const { feedbackId } = req.body;
-    const item = await Feedback.findOne({ id: feedbackId });
-    if (!item) { res.status(404).json({ error: 'Not found' }); return; }
-    const idx = item.upvotes.indexOf(userId);
-    if (idx === -1) item.upvotes.push(userId);
-    else item.upvotes.splice(idx, 1);
-    await item.save();
-    res.json({ ok: true, upvoteCount: item.upvotes.length, hasUpvoted: idx === -1 });
+    const existing = await Feedback.findOne({ id: feedbackId }).select('upvotes -_id').lean();
+    if (!existing) { res.status(404).json({ error: 'Not found' }); return; }
+    const alreadyUpvoted = existing.upvotes.includes(userId);
+    const updated = await Feedback.findOneAndUpdate(
+      { id: feedbackId },
+      alreadyUpvoted ? { $pull: { upvotes: userId } } : { $addToSet: { upvotes: userId } },
+      { new: true, select: 'upvotes -_id' }
+    );
+    res.json({ ok: true, upvoteCount: updated.upvotes.length, hasUpvoted: !alreadyUpvoted });
     return;
   }
 
@@ -601,6 +677,9 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_project') {
     const { title, subtitle = '', color = '#888785', tag = 'Project', spaceId = '' } = req.body;
     if (!title?.trim()) { res.status(400).json({ error: 'Title required' }); return; }
+    if (!isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
+    const totalProjects = await Project.countDocuments({ ownerId: userId });
+    if (totalProjects >= 200) { res.status(429).json({ error: 'Project limit reached (200 max)' }); return; }
     if (spaceId) {
       const ownedSpace = await Space.findOne({ id: spaceId, ownerId: userId });
       if (!ownedSpace) {
@@ -610,7 +689,7 @@ router.post('/', async (req, res, next) => {
     }
     const newId = 'proj_' + uid();
     const count = await Project.countDocuments({ spaceId, ownerId: userId });
-    await Project.create({ id: newId, title: title.trim(), subtitle, color, tag, spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: [], __orderRank: count });
+    await Project.create({ id: newId, title: title.trim().slice(0, 200), subtitle: subtitle.toString().trim().slice(0, 300), color, tag: tag.toString().trim().slice(0, 50) || 'Project', spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: [], __orderRank: count });
     res.json({ ok: true, id: newId });
     return;
   }
@@ -619,10 +698,13 @@ router.post('/', async (req, res, next) => {
   if (action === 'rename_project') {
     const { projectId, title, subtitle, tag, color } = req.body;
     if (!projectId || !title?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
-    const update = { title: title.trim() };
-    if (subtitle !== undefined) update.subtitle = subtitle.trim();
-    if (tag !== undefined) update.tag = tag.trim() || 'Project';
-    if (color !== undefined) update.color = color;
+    const update = { title: title.trim().slice(0, 200) };
+    if (subtitle !== undefined) update.subtitle = subtitle.toString().trim().slice(0, 300);
+    if (tag !== undefined) update.tag = tag.toString().trim().slice(0, 50) || 'Project';
+    if (color !== undefined) {
+      if (!isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
+      update.color = color;
+    }
     await Project.updateOne({ id: projectId, ownerId: userId }, { $set: update });
     res.json({ ok: true });
     return;
@@ -689,6 +771,7 @@ router.post('/', async (req, res, next) => {
     const { projectId } = req.body;
     const proj = await Project.findOne({ id: projectId, ownerId: userId }).lean();
     if (proj) {
+      logger.info({ userId, projectId, title: proj.title, taskCount: (proj.tasks || []).length }, '[audit] delete_project');
       for (const f of proj.files || []) await deleteStoredFile(f);
       for (const t of proj.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
     }
@@ -718,6 +801,7 @@ router.post('/', async (req, res, next) => {
     const { projectId } = req.body;
     const proj = await Project.findOne({ id: projectId, ownerId: userId });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    logger.info({ userId, projectId, taskCount: proj.tasks.length }, '[audit] clear_project_tasks');
     for (const t of proj.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
     proj.tasks = [];
     await proj.save();
@@ -727,13 +811,14 @@ router.post('/', async (req, res, next) => {
 
   // ── invite_collaborator ──
   if (action === 'invite_collaborator') {
-    const { projectId, name = '', email } = req.body;
+    const { projectId, name = '', email, role = 'editor' } = req.body;
     if (!projectId || !email?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const proj = await Project.findOne({ id: projectId, ownerId: userId });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const exists = proj.collaborators.some(c => c.email.toLowerCase() === email.toLowerCase());
     if (exists) { res.status(400).json({ error: 'Collaborator already exists' }); return; }
-    const collab = { id: 'collab_' + uid(), name: name.trim() || email.replace(/@.*/, ''), email: email.trim(), status: 'invited' };
+    const collab = { id: 'collab_' + uid(), name: name.trim().slice(0, 100) || email.replace(/@.*/, ''), email: email.trim(), role, status: 'invited' };
     proj.collaborators.push(collab);
     await proj.save();
     const inviter = await User.findOne({ id: userId }).select('name -_id');
@@ -747,11 +832,27 @@ router.post('/', async (req, res, next) => {
     const { projectId, collaboratorId } = req.body;
     const proj = await Project.findOne({ id: projectId, ownerId: userId });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    logger.info({ userId, projectId, collaboratorId }, '[audit] remove_collaborator');
     proj.collaborators = proj.collaborators.filter(c => c.id !== collaboratorId);
     proj.tasks.forEach(t => {
       if (t.assignee === collaboratorId) t.assignee = '';
       if (Array.isArray(t.assignees)) t.assignees = t.assignees.filter(a => a !== collaboratorId);
     });
+    await proj.save();
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── update_collaborator_role ──
+  if (action === 'update_collaborator_role') {
+    const { projectId, collaboratorId, role } = req.body;
+    if (!projectId || !collaboratorId || !role) { res.status(400).json({ error: 'Missing data' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
+    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const collab = proj.collaborators.find(c => c.id === collaboratorId);
+    if (!collab) { res.status(404).json({ error: 'Collaborator not found' }); return; }
+    collab.role = role;
     await proj.save();
     res.json({ ok: true });
     return;
@@ -776,8 +877,9 @@ router.post('/', async (req, res, next) => {
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    if (proj.tasks.length >= 1000) { res.status(429).json({ error: 'Task limit reached (1000 per project)' }); return; }
     const newId = 'task_' + uid();
-    proj.tasks.push({ id: newId, text: text.trim(), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
+    proj.tasks.push({ id: newId, text: text.trim().slice(0, 500), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, id: newId });
@@ -791,7 +893,7 @@ router.post('/', async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
-    if (task) task.text = text.trim();
+    if (task) task.text = text.trim().slice(0, 500);
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -800,7 +902,7 @@ router.post('/', async (req, res, next) => {
 
   // ── update_task_meta ──
   if (action === 'update_task_meta') {
-    const { projectId, taskId, deadline, assignee, assignees, priority, comments, badge } = req.body;
+    const { projectId, taskId, deadline, assignee, assignees, priority, badge } = req.body;
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
@@ -811,7 +913,6 @@ router.post('/', async (req, res, next) => {
       if (assignee  !== undefined) task.assignee  = assignee.trim();
       if (assignees !== undefined) task.assignees = Array.isArray(assignees) ? assignees : [];
       if (priority  !== undefined) task.priority  = priority.trim();
-      if (comments  !== undefined) task.comments  = Array.isArray(comments) ? comments : [];
       if (badge     !== undefined) task.badge     = badge;
     }
     await proj.save();
@@ -863,15 +964,17 @@ router.post('/', async (req, res, next) => {
     if (!task?.id || !task?.text) { res.status(400).json({ error: 'Invalid task' }); return; }
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const taskId_raw = String(task.id);
+    const idCollision = proj.tasks.some(t => t.id === taskId_raw);
     const safeTask = {
-      id: String(task.id),
+      id: idCollision ? 'task_' + uid() : taskId_raw,
       text: String(task.text).trim().slice(0, 1000),
       done: Boolean(task.done),
       priority: ['urgent', 'important', 'later', ''].includes(task.priority) ? task.priority : '',
       deadline: task.deadline || '',
       badge: String(task.badge || 'Custom').slice(0, 50),
       assignees: Array.isArray(task.assignees) ? task.assignees.map(String) : [],
-      comments: Array.isArray(task.comments) ? task.comments : [],
+      comments: [],
       notes: '', richNotes: '', files: [],
     };
     proj.tasks.push(safeTask);
@@ -884,7 +987,8 @@ router.post('/', async (req, res, next) => {
   // ── save_notes ──
   if (action === 'save_notes') {
     const { projectId, notes = '' } = req.body;
-    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { notes } });
+    if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
+    await Project.updateOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { notes } });
     res.json({ ok: true });
     return;
   }
@@ -892,7 +996,8 @@ router.post('/', async (req, res, next) => {
   // ── save_project_rich_notes ──
   if (action === 'save_project_rich_notes') {
     const { projectId, notes = '' } = req.body;
-    await Project.updateOne({ id: projectId, ownerId: userId }, { $set: { richNotes: notes } });
+    if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
+    await Project.updateOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { richNotes: notes } });
     res.json({ ok: true });
     return;
   }
@@ -900,6 +1005,7 @@ router.post('/', async (req, res, next) => {
   // ── save_task_notes ──
   if (action === 'save_task_notes') {
     const { projectId, taskId, notes = '' } = req.body;
+    if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
     await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.notes': notes } });
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -909,6 +1015,7 @@ router.post('/', async (req, res, next) => {
   // ── save_task_rich_notes ──
   if (action === 'save_task_rich_notes') {
     const { projectId, taskId, notes = '' } = req.body;
+    if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
     await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.richNotes': notes } });
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -918,7 +1025,7 @@ router.post('/', async (req, res, next) => {
   // ── reorder_projects ──
   if (action === 'reorder_projects') {
     const { order } = req.body;
-    if (!Array.isArray(order)) { res.status(400).json({ error: 'Invalid order' }); return; }
+    if (!Array.isArray(order) || order.length > 500) { res.status(400).json({ error: 'Invalid order' }); return; }
     const ops = order.map((id, index) => ({
       updateOne: { filter: { id, ownerId: userId }, update: { $set: { __orderRank: index } } }
     }));
@@ -934,7 +1041,8 @@ router.post('/', async (req, res, next) => {
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const key = useR2 ? req.file.key : req.file.filename;
     const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
-    await Project.updateOne({ id: pid, ownerId: userId }, { $push: { files: fe } });
+    const result = await Project.updateOne({ id: pid, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { files: fe } });
+    if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
     return;
   }
@@ -946,7 +1054,8 @@ router.post('/', async (req, res, next) => {
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const key = useR2 ? req.file.key : req.file.filename;
     const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
-    await Project.updateOne({ id: projectId, ownerId: userId, 'tasks.id': taskId }, { $push: { 'tasks.$.files': fe } });
+    const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { 'tasks.$.files': fe } });
+    if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
     return;
   }
@@ -954,7 +1063,7 @@ router.post('/', async (req, res, next) => {
   // ── delete_file (project-level) ──
   if (action === 'delete_file') {
     const { projectId, fileId } = req.body;
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const f = proj.files.find(x => x.id === fileId);
     if (f) await deleteStoredFile(f);
@@ -967,7 +1076,7 @@ router.post('/', async (req, res, next) => {
   // ── delete_task_file ──
   if (action === 'delete_task_file') {
     const { projectId, taskId, fileId } = req.body;
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) {
@@ -984,9 +1093,11 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_space') {
     const { title, icon = '📁', color = '#6366f1', description = '' } = req.body;
     if (!title?.trim()) { res.status(400).json({ error: 'Title required' }); return; }
+    if (!isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
     const count = await Space.countDocuments({ ownerId: userId });
+    if (count >= 50) { res.status(429).json({ error: 'Space limit reached (50 max)' }); return; }
     const newId = 'space_' + uid();
-    await Space.create({ id: newId, title: title.trim(), icon, color, description, ownerId: userId, __orderRank: count });
+    await Space.create({ id: newId, title: title.trim().slice(0, 200), icon: safeIcon(icon), color, description: description.toString().slice(0, 500), ownerId: userId, __orderRank: count });
     res.json({ ok: true, id: newId });
     return;
   }
@@ -996,10 +1107,13 @@ router.post('/', async (req, res, next) => {
     const { spaceId, title, icon, color, description } = req.body;
     if (!spaceId) { res.status(400).json({ error: 'Missing spaceId' }); return; }
     const update = {};
-    if (title !== undefined) update.title = title.trim();
-    if (icon !== undefined) update.icon = icon;
-    if (color !== undefined) update.color = color;
-    if (description !== undefined) update.description = description;
+    if (title !== undefined) update.title = title.toString().trim().slice(0, 200);
+    if (icon !== undefined) update.icon = safeIcon(icon);
+    if (color !== undefined) {
+      if (!isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
+      update.color = color;
+    }
+    if (description !== undefined) update.description = description.toString().slice(0, 500);
     await Space.updateOne({ id: spaceId, ownerId: userId }, { $set: update });
     res.json({ ok: true });
     return;
@@ -1010,6 +1124,7 @@ router.post('/', async (req, res, next) => {
     const { spaceId } = req.body;
     if (!spaceId) { res.status(400).json({ error: 'Missing spaceId' }); return; }
     const spaceProjects = await Project.find({ spaceId, ownerId: userId }).lean();
+    logger.info({ userId, spaceId, projectCount: spaceProjects.length }, '[audit] delete_space');
     for (const p of spaceProjects) {
       for (const f of p.files || []) await deleteStoredFile(f);
       for (const t of p.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
@@ -1024,6 +1139,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'invite_space_collaborator') {
     const { spaceId, name = '', email, role = 'editor' } = req.body;
     if (!spaceId || !email?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const space = await Space.findOne({ id: spaceId, ownerId: userId });
     if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
     const exists = (space.collaborators || []).some(c => c.email?.toLowerCase() === email.toLowerCase());
@@ -1040,6 +1156,7 @@ router.post('/', async (req, res, next) => {
   if (action === 'update_space_collaborator_role') {
     const { spaceId, collaboratorId, role } = req.body;
     if (!spaceId || !collaboratorId || !role) { res.status(400).json({ error: 'Missing data' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const space = await Space.findOne({ id: spaceId, ownerId: userId });
     if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
     const collab = space.collaborators.find(c => c.id === collaboratorId);
@@ -1066,6 +1183,8 @@ router.post('/', async (req, res, next) => {
   if (action === 'send_collab_invite') {
     const { email, entityId, entityType, role } = req.body;
     if (!email || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
+    if (!['project', 'space'].includes(entityType)) { res.status(400).json({ error: 'Invalid entity type' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const cleanEmail = email.toLowerCase().trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { res.status(400).json({ error: 'Invalid email address' }); return; }
     let entityTitle = '';
@@ -1092,6 +1211,9 @@ router.post('/', async (req, res, next) => {
     if (target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
     const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
     if (alreadyPending) { res.status(409).json({ error: 'Invite already pending for this user' }); return; }
+    // Prevent notification-inbox flooding: cap pending invites per target at 50
+    const pendingCount = await Notification.countDocuments({ toUserId: target.id, type: 'collab_invite', status: 'pending' });
+    if (pendingCount >= 50) { res.status(429).json({ error: 'This user has too many pending invites. Try again later.' }); return; }
     await Notification.create({
       id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
       fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
@@ -1107,11 +1229,14 @@ router.post('/', async (req, res, next) => {
   if (action === 'generate_invite_link') {
     const { entityId, entityType, role = 'editor' } = req.body;
     if (!entityId || !entityType) { res.status(400).json({ error: 'Missing fields' }); return; }
+    if (!['project', 'space'].includes(entityType)) { res.status(400).json({ error: 'Invalid entity type' }); return; }
+    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const token = crypto.randomBytes(12).toString('hex');
+    const expiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
     if (entityType === 'project') {
-      await Project.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role } });
+      await Project.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role, inviteTokenExpiry: expiry } });
     } else {
-      await Space.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role } });
+      await Space.updateOne({ id: entityId, ownerId: userId }, { $set: { inviteToken: token, inviteLinkRole: role, inviteTokenExpiry: expiry } });
     }
     res.json({ ok: true, token });
     return;
@@ -1128,15 +1253,19 @@ router.post('/', async (req, res, next) => {
       entityType = entity ? 'space' : null;
     }
     if (!entity) { res.status(404).json({ error: 'Invalid or expired invite link' }); return; }
+    if (entity.inviteTokenExpiry && new Date(entity.inviteTokenExpiry) < new Date()) {
+      res.status(410).json({ error: 'Invite link has expired' }); return;
+    }
     if (entity.ownerId === userId) { res.json({ ok: true, alreadyOwner: true, entityType, entityId: entity.id, entityTitle: entity.title, role: 'owner' }); return; }
     if ((entity.collaborators || []).some(c => c.userId === userId)) { res.json({ ok: true, alreadyMember: true, entityType, entityId: entity.id, entityTitle: entity.title, role: (entity.collaborators.find(c => c.userId === userId))?.role || 'editor' }); return; }
     const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
     const role = entity.inviteLinkRole || 'editor';
     const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role, avatarUrl: me.avatarUrl || '' };
+    const clearToken = { $unset: { inviteToken: '', inviteTokenExpiry: '' } };
     if (entityType === 'project') {
-      await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+      await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, ...clearToken });
     } else {
-      await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+      await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, ...clearToken });
     }
     await Notification.create({
       id: 'notif_' + uid(), toUserId: entity.ownerId, fromUserId: userId,
@@ -1217,19 +1346,25 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_task_comment') {
     const { projectId, taskId, text, mentions = [] } = req.body;
     if (!projectId || !taskId || !text?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
+    const safeMentions = Array.isArray(mentions) ? mentions.slice(0, 20).map(String) : [];
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { 'collaborators.userId': userId }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const taskForCap = proj.tasks.find(t => t.id === taskId);
+    if (!taskForCap) { res.status(404).json({ error: 'Task not found' }); return; }
+    if ((taskForCap.comments || []).length >= 500) { res.status(429).json({ error: 'Comment limit reached (500 per task)' }); return; }
     const me = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
-    const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, avatarUrl: me.avatarUrl || '', text: text.trim().slice(0, 1000), mentions, createdAt: new Date() };
+    const comment = { id: 'cmt_' + uid(), userId, username: me.username || '', name: me.name, avatarUrl: me.avatarUrl || '', text: text.trim().slice(0, 1000), mentions: safeMentions, createdAt: new Date() };
     await Project.updateOne({ id: projectId, 'tasks.id': taskId }, { $push: { 'tasks.$.comments': comment } });
-    const task = proj.tasks.find(t => t.id === taskId);
+    const task = taskForCap;
     const notifBase = { fromUserId: userId, fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '', status: 'pending' };
     const allNotifs = [];
-    // @mention notifications
+    // Build set of project member IDs so @mentions only notify actual members
+    const projectMemberIds = new Set([proj.ownerId, ...(proj.collaborators || []).map(c => c.userId).filter(Boolean)]);
+    // @mention notifications (only for project members)
     let mentionedUserIds = new Set();
-    if (mentions.length) {
-      const mentionedUsers = await User.find({ username: { $in: mentions } }).select('id -_id').lean();
-      mentionedUsers.filter(u => u.id !== userId).forEach(u => {
+    if (safeMentions.length) {
+      const mentionedUsers = await User.find({ username: { $in: safeMentions } }).select('id -_id').lean();
+      mentionedUsers.filter(u => u.id !== userId && projectMemberIds.has(u.id)).forEach(u => {
         mentionedUserIds.add(u.id);
         allNotifs.push({ id: 'notif_' + uid(), ...notifBase, toUserId: u.id, type: 'mention',
           meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) } });
@@ -1254,10 +1389,11 @@ router.post('/', async (req, res, next) => {
   if (action === 'add_project_label') {
     const { projectId, name, color } = req.body;
     if (!name?.trim()) { res.status(400).json({ error: 'Label name required' }); return; }
+    if (color !== undefined && !isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const labelId = 'lbl_' + uid();
-    proj.labels.push({ id: labelId, name: name.trim().slice(0, 30), color: color || '#6366f1' });
+    proj.labels.push({ id: labelId, name: name.trim().slice(0, 30), color: isValidColor(color) ? color : '#6366f1' });
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, id: labelId });
@@ -1281,7 +1417,7 @@ router.post('/', async (req, res, next) => {
   // ── reorder_spaces ──
   if (action === 'reorder_spaces') {
     const { order } = req.body;
-    if (!Array.isArray(order)) { res.status(400).json({ error: 'Invalid order' }); return; }
+    if (!Array.isArray(order) || order.length > 500) { res.status(400).json({ error: 'Invalid order' }); return; }
     const ops = order.map((id, index) => ({
       updateOne: { filter: { id, ownerId: userId }, update: { $set: { __orderRank: index } } }
     }));

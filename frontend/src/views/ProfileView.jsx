@@ -76,7 +76,7 @@ const btnSecondary = {
   cursor: 'pointer', fontFamily: 'inherit',
 };
 
-export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogout }) {
+export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogout, onOpenAdmin }) {
   const [profileData, setProfileData] = useState(null);
   const [loading,     setLoading]     = useState(true);
 
@@ -216,7 +216,11 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     else        { setDeleteMsg(r?.error || 'Incorrect password'); }
   };
 
-  if (loading) return null;
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+      <div style={{ width: 28, height: 28, border: '3px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'bj-spin 0.7s linear infinite' }} />
+    </div>
+  );
 
   const user  = profileData?.user  || {};
   const stats = profileData?.stats || {};
@@ -266,6 +270,26 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             <div style={{ fontSize: '12px', color: 'var(--faint)', marginTop: '3px' }}>Member since {fmt(user.createdAt)}</div>
           </div>
         </div>
+
+        {/* ── Admin Panel shortcut ── */}
+        {isAdmin && (
+          <Section title="Admin">
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '18px', padding: '22px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: '700' }}>Admin Panel</div>
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>Manage users, feedback and app settings</div>
+                </div>
+                <button
+                  onClick={onOpenAdmin}
+                  style={{ ...btnPrimary, whiteSpace: 'nowrap', background: '#7c3aed', color: '#fff' }}
+                >
+                  Open Admin ⚡
+                </button>
+              </div>
+            </div>
+          </Section>
+        )}
 
         {/* ── Stats ── */}
         <Section title="Your Stats">

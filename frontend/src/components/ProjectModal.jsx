@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
 const COLORS = ['#D4FF32','#FF5B37','#FF9BE6','#A1E6FF','#B882FF','#00FF9D','#FFD166','#FF6B6B'];
+const COLOR_NAMES = { '#D4FF32': 'Lime', '#FF5B37': 'Orange', '#FF9BE6': 'Pink', '#A1E6FF': 'Sky blue', '#B882FF': 'Purple', '#00FF9D': 'Mint', '#FFD166': 'Yellow', '#FF6B6B': 'Coral' };
 
 export default function ProjectModal({ onClose, onSuccess, project = null, spaceId = '' }) {
   const [title, setTitle] = useState(project ? project.title : '');
@@ -10,10 +11,27 @@ export default function ProjectModal({ onClose, onSuccess, project = null, space
   const [selectedColor, setSelectedColor] = useState(project ? project.color : COLORS[0]);
   
   const titleRef = useRef(null);
+  const dialogRef = useRef(null);
 
   useEffect(() => {
     titleRef.current?.focus();
-  }, []);
+    const el = dialogRef.current;
+    if (!el) return;
+    const prev = document.activeElement;
+    const trap = (e) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const focusable = Array.from(el.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'));
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey ? document.activeElement === first : document.activeElement === last) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+      }
+    };
+    el.addEventListener('keydown', trap);
+    return () => { el.removeEventListener('keydown', trap); prev?.focus(); };
+  }, [onClose]);
 
   const submit = async () => {
     if (!title.trim()) {
@@ -45,12 +63,12 @@ export default function ProjectModal({ onClose, onSuccess, project = null, space
   };
 
   return (
-    <div className="modal-bg open" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">{project ? 'Edit project' : 'Add new project'}</div>
+    <div className="modal-bg open" role="presentation" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title" ref={dialogRef}>
+        <div className="modal-title" id="project-modal-title">{project ? 'Edit project' : 'Add new project'}</div>
         <div className="modal-field">
           <label>Project name *</label>
-          <input type="text" placeholder="e.g. My New Brand" ref={titleRef} value={title} onChange={e => setTitle(e.target.value)} />
+          <input type="text" placeholder="e.g. My New Brand" ref={titleRef} value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()} />
         </div>
         <div className="modal-field">
           <label>Subtitle / description</label>
@@ -62,27 +80,32 @@ export default function ProjectModal({ onClose, onSuccess, project = null, space
         </div>
         <div className="modal-field">
           <label>Color</label>
-          <div className="color-row" style={{ marginBottom: '16px' }}>
+          <div className="color-row" style={{ marginBottom: '16px' }} role="radiogroup" aria-label="Project color">
             {COLORS.map(c => (
-              <div 
+              <button
                 key={c}
-                className={`color-swatch ${c === selectedColor ? 'selected' : ''}`} 
-                style={{background: c}} 
+                className={`color-swatch ${c === selectedColor ? 'selected' : ''}`}
+                style={{ background: c, border: 'none', cursor: 'pointer' }}
                 onClick={() => setSelectedColor(c)}
-              ></div>
+                aria-label={`${COLOR_NAMES[c] || c} color`}
+                aria-pressed={c === selectedColor}
+              />
             ))}
             {/* Native color picker as a swatch */}
-            <div 
+            <div
               className={`color-swatch ${!COLORS.includes(selectedColor) ? 'selected' : ''}`}
-              style={{ background: !COLORS.includes(selectedColor) ? selectedColor : 'linear-gradient(45deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8b00ff)', border: 'none', position: 'relative' }}
+              style={{ background: !COLORS.includes(selectedColor) ? selectedColor : 'linear-gradient(45deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8b00ff)', border: 'none', position: 'relative', cursor: 'pointer' }}
               onClick={() => document.getElementById('custom-color-picker').click()}
+              aria-label="Custom color"
+              role="button"
             >
-              <input 
+              <input
                 id="custom-color-picker"
-                type="color" 
-                value={selectedColor} 
+                type="color"
+                value={selectedColor}
                 onChange={e => setSelectedColor(e.target.value)}
                 style={{ opacity: 0, position: 'absolute', inset: 0, width: '100%', height: '100%', cursor: 'pointer' }}
+                aria-label="Choose custom color"
               />
             </div>
           </div>
