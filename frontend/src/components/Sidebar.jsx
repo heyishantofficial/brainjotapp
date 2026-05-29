@@ -43,8 +43,20 @@ export default function Sidebar({
     if (currentProjectId) {
       const proj = projects.find(p => p.id === currentProjectId);
       if (proj?.spaceId) setExpandedSpaces(prev => new Set([...prev, proj.spaceId]));
+      // Also expand the shared space if this project lives there
+      sharedSpaces.forEach(s => {
+        if ((s.projects || []).some(p => p.id === currentProjectId)) {
+          setExpandedSpaces(prev => new Set([...prev, s.id]));
+        }
+      });
     }
-  }, [currentProjectId, currentSpaceId, projects]);
+  }, [currentProjectId, currentSpaceId, projects, sharedSpaces]);
+
+  useEffect(() => {
+    if (currentSharedSpaceId) {
+      setExpandedSpaces(prev => new Set([...prev, currentSharedSpaceId]));
+    }
+  }, [currentSharedSpaceId]);
 
   useEffect(() => {
     if (!contextMenu.open && !spaceCtxMenu.open) return;
@@ -73,6 +85,17 @@ export default function Sidebar({
       setExpandedSpaces(prev => new Set([...prev, space.id]));
       onSelectSpace(space.id);
       onSelect(null);
+    }
+  };
+
+  const handleSharedSpaceNameClick = (space) => {
+    const isExpanded = expandedSpaces.has(space.id);
+    const isActive = currentSharedSpaceId === space.id;
+    if (isActive && isExpanded) {
+      setExpandedSpaces(prev => { const next = new Set(prev); next.delete(space.id); return next; });
+    } else {
+      setExpandedSpaces(prev => new Set([...prev, space.id]));
+      onSelectSharedSpace(space.id);
     }
   };
 
@@ -369,18 +392,54 @@ export default function Sidebar({
               <span style={{ background: 'var(--accent)', color: '#000', fontSize: '9px', fontWeight: '900', padding: '1px 6px', borderRadius: '20px', letterSpacing: '0.5px' }}>{sharedSpaces.length + sharedProjects.length}</span>
             </div>
             <div id="nav-shared">
-              {sharedSpaces.map(s => (
-                <button
-                  key={s.id}
-                  className={`nav-item ${currentSharedSpaceId === s.id ? 'active' : ''}`}
-                  onClick={() => onSelectSharedSpace(s.id)}
-                  title={`Space shared by ${s.sharedBy}`}
-                >
-                  <span className="nav-dot" style={{ background: s.color }}></span>
-                  <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.title}</span>
-                  <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0 }}>🗂</span>
-                </button>
-              ))}
+              {sharedSpaces.map(s => {
+                const spaceProjects = (s.projects || []).filter(p => !p.archived);
+                const isExpanded = expandedSpaces.has(s.id);
+                const isSpaceActive = currentSharedSpaceId === s.id && !currentProjectId;
+                return (
+                  <div key={s.id} style={{ marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px' }}>
+                      <button
+                        className={`nav-item ${isSpaceActive ? 'active' : ''}`}
+                        onClick={() => handleSharedSpaceNameClick(s)}
+                        title={`Space shared by ${s.sharedBy}`}
+                        style={{ flex: 1, justifyContent: 'flex-start', gap: '8px', borderRadius: '12px', paddingRight: '4px' }}
+                      >
+                        <span style={{ width: '8px', height: '8px', borderRadius: '3px', background: s.color, flexShrink: 0, display: 'inline-block' }}></span>
+                        <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontWeight: isSpaceActive ? '800' : '700' }}>
+                          {s.title}
+                        </span>
+                        {spaceProjects.length > 0 && (
+                          <span style={{ fontSize: '10px', background: `${s.color}33`, color: s.color, padding: '2px 6px', borderRadius: '8px', fontWeight: '800', flexShrink: 0 }}>
+                            {spaceProjects.length}
+                          </span>
+                        )}
+                        <span style={{ fontSize: '11px', color: 'var(--muted)', flexShrink: 0 }}>{isExpanded ? '▾' : '▸'}</span>
+                      </button>
+                      <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0, marginRight: '2px' }}>🗂</span>
+                    </div>
+                    {isExpanded && spaceProjects.map(p => {
+                      const isOwned = projects.some(op => op.id === p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
+                          onClick={() => isOwned ? onSelect(p.id) : onSelectSharedSpace(s.id)}
+                          style={{ paddingLeft: '28px', fontSize: '13px', opacity: 0.9, width: '100%' }}
+                        >
+                          <span className="nav-dot" style={{ background: p.color }}></span>
+                          <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                            {p.title}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {isExpanded && spaceProjects.length === 0 && (
+                      <div style={{ fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}>No projects</div>
+                    )}
+                  </div>
+                );
+              })}
               {sharedProjects.map(p => (
                 <button
                   key={p.id}
