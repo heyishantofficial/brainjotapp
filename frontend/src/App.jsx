@@ -33,6 +33,27 @@ const Spinner = () => (
 );
 
 
+function playNotifChime() {
+  if (localStorage.getItem('soundEnabled') === 'false') return;
+  try {
+    const ctx = new AudioContext();
+    [[880, 0, 0.12], [1108, 0.1, 0.28]].forEach(([freq, startOffset, endOffset]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, ctx.currentTime + startOffset);
+      gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + startOffset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + endOffset);
+      osc.start(ctx.currentTime + startOffset);
+      osc.stop(ctx.currentTime + endOffset);
+    });
+    setTimeout(() => ctx.close(), 500);
+  } catch { /* AudioContext unavailable */ }
+}
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -68,6 +89,13 @@ export default function App() {
   
   const [notifications, setNotifications] = useState([]);
   const unreadCount = notifications.filter(n => n.status === 'pending').length;
+  const prevUnreadRef = useRef(null);
+  useEffect(() => {
+    if (prevUnreadRef.current !== null && unreadCount > prevUnreadRef.current) {
+      playNotifChime();
+    }
+    prevUnreadRef.current = unreadCount;
+  }, [unreadCount]);
 
   const loadNotifications = useCallback(async () => {
     try {

@@ -119,12 +119,20 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     });
   }, []);
 
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('soundEnabled') !== 'false');
+
   const toggleTheme = () => {
     const isLight = document.body.classList.contains('theme-light');
     if (isLight) { document.body.classList.remove('theme-light'); localStorage.setItem('theme', 'dark'); }
     else          { document.body.classList.add('theme-light');    localStorage.setItem('theme', 'light'); }
   };
   const isLight = () => document.body.classList.contains('theme-light');
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    localStorage.setItem('soundEnabled', String(next));
+  };
 
   const handleSaveProfile = async () => {
     if (!editName.trim()) { setEditMsg('Name cannot be empty'); return; }
@@ -407,6 +415,18 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
                 style={{ padding: '8px 18px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}
               >
                 {isLight() ? '🌙 Dark' : '☀️ Light'}
+              </button>
+            </div>
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '18px', marginTop: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: '700' }}>Sounds</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>Task completion celebration and notification chime</div>
+              </div>
+              <button
+                onClick={toggleSound}
+                style={{ padding: '8px 18px', borderRadius: '12px', border: '1px solid var(--border)', background: soundEnabled ? 'var(--accent)' : 'var(--surface2)', color: soundEnabled ? '#000' : 'var(--text)', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.2s, color 0.2s' }}
+              >
+                {soundEnabled ? '🔊 On' : '🔇 Off'}
               </button>
             </div>
           </div>

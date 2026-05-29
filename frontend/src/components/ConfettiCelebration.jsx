@@ -1,8 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-
-// Dynamically import all confetti sounds from the assets folder
-const SOUND_FILES = import.meta.glob('../assets/sounds/confetti/*.mp3', { eager: true });
-const SOUND_LIBRARY = Object.values(SOUND_FILES).map(m => m.default);
+import faaahSound from '../assets/sounds/confetti/faaah.mp3';
 
 const COLORS = ['#D4FF32', '#FF4C4C', '#4C9EFF', '#FFD700', '#FF69B4', '#00E5CC', '#FF8C00', '#C77DFF'];
 const PARTICLE_COUNT = 100;
@@ -16,10 +13,9 @@ export default function ConfettiCelebration({ onDone }) {
   const audioPlayedRef = useRef(false);
 
   useEffect(() => {
-    // 1. Play random sound immediately on mount
-    if (!audioPlayedRef.current && SOUND_LIBRARY.length > 0) {
-      const randomSound = SOUND_LIBRARY[Math.floor(Math.random() * SOUND_LIBRARY.length)];
-      const audio = new Audio(randomSound);
+    // 1. Play celebration sound (respects user sound preference)
+    if (!audioPlayedRef.current && localStorage.getItem('soundEnabled') !== 'false') {
+      const audio = new Audio(faaahSound);
       audio.volume = 0.6;
       audio.play().catch(() => {});
       audioPlayedRef.current = true;
