@@ -364,6 +364,11 @@ router.get('/', apiLimiter, async (req, res) => {
     if (freshUser) req.session.userRole = freshUser.role || 'user';
     const spaces   = await Space.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
     const projects = await Project.find({ ownerId: userId }).sort({ __orderRank: 1 }).select('-_id -__v');
+    // Also fetch projects in owned spaces that were created by space collaborators
+    const ownedSpaceIds = toPlain(spaces).map(s => s.id).filter(Boolean);
+    const spaceEditorProjectDocs = ownedSpaceIds.length
+      ? await Project.find({ spaceId: { $in: ownedSpaceIds }, ownerId: { $ne: userId } }).select('-_id -__v').lean()
+      : [];
     const sharedProjectDocs = await Project.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
     const sharedSpaceDocs   = await Space.find({ 'collaborators.userId': userId, ownerId: { $ne: userId } }).select('-_id -__v').lean();
     // Fetch projects belonging to shared spaces so the SpaceView can render them
@@ -383,7 +388,8 @@ router.get('/', apiLimiter, async (req, res) => {
     });
     res.json({
       spaces: toPlain(spaces),
-      projects: toPlain(projects),
+      // Merge collaborator-created projects in owned spaces so they appear in the space view
+      projects: [...toPlain(projects), ...spaceEditorProjectDocs],
       sharedProjects: annotateShared(sharedProjectDocs),
       sharedSpaces: annotateShared(sharedSpaceDocs).map(s => ({
         ...s,
@@ -689,7 +695,18 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }
     const newId = 'proj_' + uid();
     const count = await Project.countDocuments({ spaceId, ownerId: userId });
-    await Project.create({ id: newId, title: title.trim().slice(0, 200), subtitle: subtitle.toString().trim().slice(0, 300), color, tag: tag.toString().trim().slice(0, 50) || 'Project', spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: [], __orderRank: count });
+    const initialCollaborators = [];
+    // If creating in a space the user doesn't own, auto-add the space owner as editor collaborator
+    if (spaceId) {
+      const parentSpace = await Space.findOne({ id: spaceId, ownerId: { $ne: userId } }).select('ownerId -_id').lean();
+      if (parentSpace) {
+        const spaceOwner = await User.findOne({ id: parentSpace.ownerId }).select('id name email username avatarUrl -_id').lean();
+        if (spaceOwner) {
+          initialCollaborators.push({ id: 'collab_' + uid(), userId: spaceOwner.id, name: spaceOwner.name, email: spaceOwner.email || '', username: spaceOwner.username || '', avatarUrl: spaceOwner.avatarUrl || '', role: 'editor', status: 'active' });
+        }
+      }
+    }
+    await Project.create({ id: newId, title: title.trim().slice(0, 200), subtitle: subtitle.toString().trim().slice(0, 300), color, tag: tag.toString().trim().slice(0, 50) || 'Project', spaceId, ownerId: userId, tasks: [], notes: '', richNotes: '', files: [], collaborators: initialCollaborators, __orderRank: count });
     res.json({ ok: true, id: newId });
     return;
   }

@@ -8,7 +8,7 @@ const ROLE_LABELS = {
   viewer: { label: 'Viewer', desc: 'Can view tasks and notes only',   icon: '👁',  color: '#8b5cf6' },
 };
 
-export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast, currentUser }) {
+export default function CollabModal({ projectId, project, onClose, onUpdate, onUpdateRole, onToast, currentUser, spaceCollaborators = [] }) {
   const [activeTab, setActiveTab] = useState('members');
   const [emailInput, setEmailInput] = useState('');
   const [role, setRole] = useState('editor');
@@ -46,6 +46,9 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
   }, [onClose]);
 
   const collabs = project?.collaborators || [];
+  // Deduplicate: hide space collaborators who are already direct project collaborators
+  const directIds = new Set([...(project?.collaborators || []).map(c => c.userId).filter(Boolean), currentUser?.id]);
+  const filteredSpaceCollabs = spaceCollaborators.filter(c => c.userId && !directIds.has(c.userId));
   const ownerInitials = (currentUser?.name || 'YO').split(' ').filter(Boolean).map(n => n[0].toUpperCase()).join('').slice(0, 2) || 'YO';
 
   const submit = async () => {
@@ -182,6 +185,26 @@ export default function CollabModal({ projectId, project, onClose, onUpdate, onU
                 </div>
               );
             })}
+
+            {filteredSpaceCollabs.length > 0 && (
+              <>
+                <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '20px', marginBottom: '8px' }}>
+                  Via Space
+                </div>
+                {filteredSpaceCollabs.map(c => (
+                  <div key={c.id || c.userId} className="collab-member-row" style={{ opacity: 0.75 }}>
+                    <Avatar name={c.name} src={c.avatarUrl} size={40} style={{ border: '2px solid var(--border)' }} />
+                    <div className="collab-member-info">
+                      <div className="collab-member-name">{c.name}</div>
+                      <div className="collab-member-email">{c.email || 'Space collaborator'}</div>
+                    </div>
+                    <div className="collab-role-badge" style={{ background: 'rgba(99,102,241,0.12)', color: '#6366f1', borderColor: 'rgba(99,102,241,0.25)', cursor: 'default' }}>
+                      🗂 Via Space
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
 

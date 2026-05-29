@@ -561,17 +561,24 @@ export default function App() {
         </React.Suspense>
       )}
 
-      {showCollab.open && (
-        <CollabModal
-          projectId={showCollab.projectId}
-          project={(appData.projects || []).find(p => p.id === showCollab.projectId) || sharedProjects.find(p => p.id === showCollab.projectId)}
-          onClose={() => setShowCollab({ open: false, projectId: '' })}
-          onUpdate={loadData}
-          onUpdateRole={updateProjectCollabRole}
-          onToast={toast}
-          currentUser={currentUser}
-        />
-      )}
+      {showCollab.open && (() => {
+        const collabProject = (appData.projects || []).find(p => p.id === showCollab.projectId) || sharedProjects.find(p => p.id === showCollab.projectId);
+        const collabSpace = collabProject?.spaceId
+          ? (appData.spaces || []).find(s => s.id === collabProject.spaceId) || sharedSpaces.find(s => s.id === collabProject.spaceId)
+          : null;
+        return (
+          <CollabModal
+            projectId={showCollab.projectId}
+            project={collabProject}
+            spaceCollaborators={collabSpace?.collaborators || []}
+            onClose={() => setShowCollab({ open: false, projectId: '' })}
+            onUpdate={loadData}
+            onUpdateRole={updateProjectCollabRole}
+            onToast={toast}
+            currentUser={currentUser}
+          />
+        );
+      })()}
 
       {showSpaceCollab.open && (
         <SpaceCollabModal
