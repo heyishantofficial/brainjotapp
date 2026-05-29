@@ -414,7 +414,7 @@ export default function App() {
           <SpaceView
             space={currentSharedSpace}
             projects={(currentSharedSpace.projects || []).filter(p => !p.archived)}
-            onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }}
+            onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); setCurrentSharedSpaceId(null); }}
             onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
             canAddProject={currentSharedSpace.myRole === 'editor'}
@@ -438,7 +438,14 @@ export default function App() {
             >
               <ProjectDetailView
                 project={currentProject}
-                onBack={() => setCurrentProjectId(null)}
+                onBack={() => {
+                  const spaceId = currentProject?.spaceId;
+                  setCurrentProjectId(null);
+                  if (spaceId) {
+                    const parentSharedSpace = sharedSpaces.find(s => s.id === spaceId);
+                    if (parentSharedSpace) { setCurrentSharedSpaceId(parentSharedSpace.id); return; }
+                  }
+                }}
                 onUpdate={loadData}
                 onToast={toast}
                 highlightedTaskId={highlightedTaskId}
@@ -495,7 +502,7 @@ export default function App() {
         <ProjectModal
           spaceId={addProjectSpaceId}
           onClose={() => setShowAddProject(false)}
-          onSuccess={(id) => { loadData(); setCurrentProjectId(id); setShowAddProject(false); toast('Project created!'); }}
+          onSuccess={(id) => { loadData(); setCurrentProjectId(id); setCurrentSharedSpaceId(null); setCurrentSharedProjectId(null); setShowAddProject(false); toast('Project created!'); }}
         />
       )}
       {showAddSpace && (
