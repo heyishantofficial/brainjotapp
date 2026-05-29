@@ -70,10 +70,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-motion': ['framer-motion'],
-          'vendor-socket': ['socket.io-client'],
-          'vendor-dom':    ['dompurify'],
+        manualChunks(id) {
+          if (id.includes('framer-motion')) return 'vendor-motion';
+          if (id.includes('socket.io-client')) return 'vendor-socket';
+          if (id.includes('dompurify')) return 'vendor-dom';
         }
       }
     }
