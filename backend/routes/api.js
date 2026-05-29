@@ -1400,6 +1400,22 @@ router.post('/', apiLimiter, async (req, res, next) => {
     return;
   }
 
+  // ── update_project_label ──
+  if (action === 'update_project_label') {
+    const { projectId, labelId, name, color } = req.body;
+    if (!labelId) { res.status(400).json({ error: 'labelId required' }); return; }
+    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    const label = proj.labels.find(l => l.id === labelId);
+    if (!label) { res.status(404).json({ error: 'Label not found' }); return; }
+    if (name?.trim()) label.name = name.trim().slice(0, 30);
+    if (color && isValidColor(color)) label.color = color;
+    await proj.save();
+    emitProjectUpdate(req, projectId);
+    res.json({ ok: true });
+    return;
+  }
+
   // ── delete_project_label ──
   if (action === 'delete_project_label') {
     const { projectId, labelId } = req.body;

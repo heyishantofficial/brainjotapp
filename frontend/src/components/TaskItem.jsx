@@ -41,6 +41,8 @@ export default function TaskItem({
   const [newLabelName, setNewLabelName] = useState('');
   const [newLabelColor, setNewLabelColor] = useState('#6366f1');
   const [savingLabel, setSavingLabel] = useState(false);
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [editingLabelName, setEditingLabelName] = useState('');
 
   const notesTimerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -102,7 +104,15 @@ export default function TaskItem({
     }
   }, [highlighted]);
 
-  const closeLabelPicker = () => { setShowLabelPicker(false); setCreatingLabel(false); setNewLabelName(''); };
+  const closeLabelPicker = () => { setShowLabelPicker(false); setCreatingLabel(false); setNewLabelName(''); setEditingLabelId(null); setEditingLabelName(''); };
+
+  const saveRenameLabel = async (labelId) => {
+    if (!editingLabelName.trim()) { setEditingLabelId(null); return; }
+    await api('update_project_label', { projectId: project.id, labelId, name: editingLabelName.trim() });
+    setEditingLabelId(null);
+    setEditingLabelName('');
+    onUploadComplete();
+  };
 
   const LABEL_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#6366f1','#94a3b8'];
   const projectLabels = project.labels || [];
@@ -332,11 +342,26 @@ export default function TaskItem({
 
                   {projectLabels.map(l => (
                     <div key={l.id} style={{ display: 'flex', alignItems: 'center', borderRadius: '8px' }} onMouseEnter={e => e.currentTarget.style.background='var(--surface2)'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
-                      <button onClick={() => selectLabel(l.id)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: 'var(--text)', textAlign: 'left' }}>
-                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, flexShrink: 0, display: 'inline-block' }} />
-                        {l.name}
-                        {l.id === task.badge && <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '11px' }}>✓</span>}
-                      </button>
+                      {editingLabelId === l.id ? (
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 6px' }} onClick={e => e.stopPropagation()}>
+                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, flexShrink: 0, display: 'inline-block', marginLeft: '4px' }} />
+                          <input
+                            autoFocus
+                            value={editingLabelName}
+                            onChange={e => setEditingLabelName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveRenameLabel(l.id); if (e.key === 'Escape') { setEditingLabelId(null); setEditingLabelName(''); } }}
+                            onBlur={() => saveRenameLabel(l.id)}
+                            style={{ flex: 1, padding: '3px 6px', borderRadius: '6px', border: '1px solid var(--accent)', background: 'var(--surface2)', color: 'var(--text)', fontSize: '12px', outline: 'none' }}
+                          />
+                        </div>
+                      ) : (
+                        <button onClick={() => selectLabel(l.id)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: 'var(--text)', textAlign: 'left' }}>
+                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, flexShrink: 0, display: 'inline-block' }} />
+                          {l.name}
+                          {l.id === task.badge && <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '11px' }}>✓</span>}
+                        </button>
+                      )}
+                      <button onClick={(e) => { e.stopPropagation(); setEditingLabelId(l.id); setEditingLabelName(l.name); }} style={{ padding: '4px 6px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: '11px' }} title="Rename label">✎</button>
                       <button onClick={(e) => deleteLabel(e, l.id)} style={{ padding: '4px 8px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--faint)', fontSize: '11px' }} title="Delete label">✕</button>
                     </div>
                   ))}
