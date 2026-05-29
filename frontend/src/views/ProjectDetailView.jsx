@@ -12,7 +12,7 @@ import DOMPurify from 'dompurify';
 
 
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [] }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
@@ -45,10 +45,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const activeTasks = isSharedView ? localTasks : (project.tasks || []);
 
+  // Merge direct project collaborators with space-level collaborators (dedup by userId)
+  const directCollabs = project.collaborators || [];
+  const directUserIds = new Set(directCollabs.map(c => c.userId).filter(Boolean));
+  const extraSpaceCollabs = spaceCollaborators.filter(c => c.userId && !directUserIds.has(c.userId));
+  const allCollaborators = [...directCollabs, ...extraSpaceCollabs];
+
   // For shared views include the owner so collaborators can @mention them
   const mentionUsers = isSharedView && project.ownerInfo
-    ? [project.ownerInfo, ...(project.collaborators || [])]
-    : (project.collaborators || []);
+    ? [project.ownerInfo, ...allCollaborators]
+    : allCollaborators;
 
   const processedTasks = [...activeTasks]
     .filter(t => {
@@ -550,7 +556,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       <span className="filter-label">Assignee</span>
                       <select className="filter-select" value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)}>
                         <option value="all">All</option>
-                        {(project.collaborators || []).map(c => (
+                        {allCollaborators.map(c => (
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
                       </select>

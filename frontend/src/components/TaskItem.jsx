@@ -437,7 +437,7 @@ export default function TaskItem({
         {!isEditing && assignees.length > 0 && (
           <div style={{ display: 'flex', marginLeft: 'auto', marginRight: '8px' }}>
             {assignees.map((aid, idx) => {
-              const collab = (project.collaborators || []).find(c => c.id === aid);
+              const collab = collaborators.find(c => c.id === aid);
               const name = aid === 'me' ? (currentUser?.name || 'Me') : collab?.name || 'Guest';
               const src = aid === 'me' ? (currentUser?.avatarUrl || '') : (collab?.avatarUrl || '');
               return (
@@ -507,7 +507,7 @@ export default function TaskItem({
             >
               {assignees.length === 0 && <span style={{ color: 'var(--faint)' }}>Unassigned</span>}
               {assignees.map(aid => {
-                const name = aid === 'me' ? 'Me' : (project.collaborators || []).find(c => c.id === aid)?.name || 'Guest';
+                const name = aid === 'me' ? 'Me' : collaborators.find(c => c.id === aid)?.name || 'Guest';
                 return (
                   <span key={aid} className="meta-pill active" style={{ fontSize: '12px', padding: '2px 8px' }}>
                     {name}
@@ -538,9 +538,9 @@ export default function TaskItem({
                 >
                   👤 Me {assignees.includes('me') && '✓'}
                 </button>
-                {(project.collaborators || []).map(c => (
-                  <button 
-                    key={c.id} 
+                {collaborators.map(c => (
+                  <button
+                    key={c.id}
                     className={`role-option ${assignees.includes(c.id) ? 'active' : ''}`}
                     onClick={() => {
                       const next = assignees.includes(c.id) ? assignees.filter(a => a !== c.id) : [...assignees, c.id];

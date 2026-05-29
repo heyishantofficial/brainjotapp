@@ -466,6 +466,7 @@ export default function App() {
             >
               <ProjectDetailView
                 project={currentProject}
+                spaceCollaborators={currentProject.spaceId ? ((appData.spaces || []).find(s => s.id === currentProject.spaceId)?.collaborators || []) : []}
                 onBack={() => {
                   const spaceId = currentProject?.spaceId;
                   setCurrentProjectId(null);
@@ -501,6 +502,7 @@ export default function App() {
             >
               <ProjectDetailView
                 project={currentSharedProject}
+                spaceCollaborators={currentSharedProject.spaceId ? (sharedSpaces.find(s => s.id === currentSharedProject.spaceId)?.collaborators || []) : []}
                 isSharedView={true}
                 sharedBy={currentSharedProject.sharedBy}
                 currentUserRole={currentSharedProject.myRole || 'viewer'}
