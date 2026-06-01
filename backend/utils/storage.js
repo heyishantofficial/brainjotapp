@@ -39,13 +39,24 @@ if (useR2) {
 // rather than a Node.js ReadStream which fetch doesn't handle reliably.
 async function uploadLocalFileToR2(localPath, key, mimeType) {
   const body = fs.readFileSync(localPath);
-  await s3.send(new PutObjectCommand({
-    Bucket: R2_BUCKET_NAME,
-    Key: key,
-    Body: body,
-    ContentType: mimeType || 'application/octet-stream',
-    ContentLength: body.length,
-  }));
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      Body: body,
+      ContentType: mimeType || 'application/octet-stream',
+      ContentLength: body.length,
+    }));
+  } catch (err) {
+    // Unwrap undici's "fetch failed" TypeError to expose the real cause
+    // e.g. ENOTFOUND (bad account ID), EPROTO (SSL), ECONNREFUSED, etc.
+    const cause = err.cause;
+    const detail = cause
+      ? `[${cause.code || cause.name || '?'}] ${cause.message || ''}`.trim()
+      : err.message;
+    logger.error({ key, endpoint: `https://${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`, bucket: R2_BUCKET_NAME, cause: detail }, '[storage] R2 upload error');
+    throw new Error(detail || err.message);
+  }
   try { fs.unlinkSync(localPath); } catch { /* ignore cleanup error */ }
   return key;
 }
