@@ -1,62 +1,121 @@
 const path = require('path');
 const fs = require('fs');
-const { S3Client, DeleteObjectCommand, DeleteObjectsCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
-const { FetchHttpHandler } = require('@smithy/fetch-http-handler');
+const https = require('https');
+const crypto = require('crypto');
+const { S3Client, DeleteObjectCommand, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { SignatureV4 } = require('@smithy/signature-v4');
 const logger = require('./logger');
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 
 // Trim to guard against Railway env vars with accidental trailing whitespace/newlines
-const R2_ACCOUNT_ID     = (process.env.R2_ACCOUNT_ID     || '').trim();
-const R2_ACCESS_KEY_ID  = (process.env.R2_ACCESS_KEY_ID  || '').trim();
+const R2_ACCOUNT_ID        = (process.env.R2_ACCOUNT_ID        || '').trim();
+const R2_ACCESS_KEY_ID     = (process.env.R2_ACCESS_KEY_ID     || '').trim();
 const R2_SECRET_ACCESS_KEY = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
-const R2_BUCKET_NAME    = (process.env.R2_BUCKET_NAME    || '').trim();
-const R2_PUBLIC_URL     = (process.env.R2_PUBLIC_URL     || '').trim();
+const R2_BUCKET_NAME       = (process.env.R2_BUCKET_NAME       || '').trim();
+const R2_PUBLIC_URL        = (process.env.R2_PUBLIC_URL        || '').trim();
 
 const useR2 = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME);
 
-// Use FetchHttpHandler (undici-backed) instead of the default NodeHttpHandler to
-// avoid TLS handshake failures that affect the Node.js http module with some
-// Cloudflare R2 endpoints in containerised environments.
+// S3Client is used only for delete operations.
+// Uploads use a manually-signed https.request (see uploadLocalFileToR2).
 const s3 = useR2 ? new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
-  },
+  credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
   forcePathStyle: true,
-  requestHandler: new FetchHttpHandler(),
 }) : null;
 
 if (useR2) {
-  logger.info({ endpoint: `https://${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`, bucket: R2_BUCKET_NAME }, '[storage] R2 configured');
+  logger.info({
+    host: `${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`,
+    bucket: R2_BUCKET_NAME,
+  }, '[storage] R2 configured');
 }
 
-// Upload a local file to R2 and delete the local copy on success.
-// Returns the R2 key on success, throws on failure.
-// Uses readFileSync (Buffer) so FetchHttpHandler/undici gets a known-length body
-// rather than a Node.js ReadStream which fetch doesn't handle reliably.
+// SHA-256 implementation backed by Node.js built-in crypto.
+// Required by @smithy/signature-v4 which needs a HashConstructor.
+class NodeSha256 {
+  constructor() { this._h = crypto.createHash('sha256'); }
+  update(data, enc) {
+    if (typeof data === 'string') this._h.update(data, enc || 'utf8');
+    else this._h.update(data);
+  }
+  digest() { return Promise.resolve(this._h.digest()); }
+}
+
+// Upload a file to R2.
+//
+// WHY we bypass the AWS SDK's S3Client for this operation:
+// Despite forcePathStyle:true, @aws-sdk/client-s3 v3 rewrites the URL to
+// virtual-hosted style  →  {bucket}.{accountId}.r2.cloudflarestorage.com
+// Cloudflare only has a cert for *.r2.cloudflarestorage.com (one wildcard level),
+// so {bucket}.{accountId}.r2.cloudflarestorage.com has NO valid cert and every
+// TLS handshake fails with ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE (alert 40).
+//
+// Fix: build the URL ourselves (always path-style), sign with SigV4 via
+// @smithy/signature-v4 (already a transitive dep), then send with https.request.
+// The target hostname  →  {accountId}.r2.cloudflarestorage.com  matches the cert.
 async function uploadLocalFileToR2(localPath, key, mimeType) {
   const body = fs.readFileSync(localPath);
-  try {
-    await s3.send(new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: key,
-      Body: body,
-      ContentType: mimeType || 'application/octet-stream',
-      ContentLength: body.length,
-    }));
-  } catch (err) {
-    // Unwrap undici's "fetch failed" TypeError to expose the real cause
-    // e.g. ENOTFOUND (bad account ID), EPROTO (SSL), ECONNREFUSED, etc.
-    const cause = err.cause;
-    const detail = cause
-      ? `[${cause.code || cause.name || '?'}] ${cause.message || ''}`.trim()
-      : err.message;
-    logger.error({ key, endpoint: `https://${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`, bucket: R2_BUCKET_NAME, cause: detail }, '[storage] R2 upload error');
-    throw new Error(detail || err.message);
-  }
+  const host = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  // Encode each path segment but preserve the slash separator
+  const encodedKey = key.split('/').map(encodeURIComponent).join('/');
+  const urlPath = `/${R2_BUCKET_NAME}/${encodedKey}`;
+  const contentType = mimeType || 'application/octet-stream';
+
+  logger.info({ host, urlPath, size: body.length }, '[storage] R2 upload start');
+
+  const signer = new SignatureV4({
+    service: 's3',
+    region: 'auto',
+    credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+    sha256: NodeSha256,
+  });
+
+  const signed = await signer.sign({
+    method: 'PUT',
+    hostname: host,
+    protocol: 'https:',
+    path: urlPath,
+    headers: {
+      host,
+      'content-type': contentType,
+      'content-length': String(body.length),
+    },
+    body,
+  });
+
+  // Remove 'host' from signed.headers — Node.js https sets it from `hostname`
+  // and a duplicate can cause request issues.
+  const { host: _h, ...reqHeaders } = signed.headers;
+
+  await new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname: host, port: 443, path: urlPath, method: 'PUT', headers: reqHeaders },
+      (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          res.resume();
+          logger.info({ host, urlPath, status: res.statusCode }, '[storage] R2 upload ok');
+          return resolve();
+        }
+        let errData = '';
+        res.on('data', d => { errData += d; });
+        res.on('end', () => {
+          const msg = `R2 HTTP ${res.statusCode}: ${errData.slice(0, 300)}`;
+          logger.error({ host, urlPath, status: res.statusCode, body: errData.slice(0, 300) }, '[storage] R2 upload failed');
+          reject(new Error(msg));
+        });
+      },
+    );
+    req.on('error', (err) => {
+      logger.error({ host, urlPath, code: err.code, message: err.message }, '[storage] R2 upload network error');
+      reject(err);
+    });
+    req.write(body);
+    req.end();
+  });
+
   try { fs.unlinkSync(localPath); } catch { /* ignore cleanup error */ }
   return key;
 }
