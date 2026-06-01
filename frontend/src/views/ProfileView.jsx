@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api, apiForm } from '../api';
+import { api, apiUpload } from '../api';
 import Avatar from '../components/Avatar';
 
 async function compressAvatar(file) {
@@ -164,9 +164,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     if (!file) return;
     setAvatarUploading(true);
     const compressed = await compressAvatar(file);
-    const fd = new FormData();
-    fd.append('file', compressed);
-    const r = await apiForm('upload_avatar', fd);
+    const r = await apiUpload(compressed, { type: 'avatar' });
     if (r?.avatarUrl) {
       setProfileData(prev => ({ ...prev, user: { ...prev.user, avatarUrl: r.avatarUrl } }));
       onUserUpdate?.({ avatarUrl: r.avatarUrl });

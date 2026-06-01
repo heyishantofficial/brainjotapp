@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, Search, MessageSquarePlus } from 'lucide-react';
-import { api, apiForm } from '../api';
+import { api, apiForm, apiUpload } from '../api';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
 import ActivityFeed from '../components/ActivityFeed';
@@ -338,10 +338,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     if (!files || files.length === 0) return;
     setUploadProgress({ done: 0, total: files.length });
     for (let i = 0; i < files.length; i++) {
-      const fd = new FormData();
-      fd.append('projectId', project.id);
-      fd.append('file', files[i]);
-      const r = await apiForm('upload', fd);
+      const r = await apiUpload(files[i], { type: 'project', projectId: project.id });
       if (r?.error) { onToast(r.error); }
       setUploadProgress({ done: i + 1, total: files.length });
     }

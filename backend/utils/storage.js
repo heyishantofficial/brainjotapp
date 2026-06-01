@@ -1,6 +1,5 @@
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
 const crypto = require('crypto');
 const { S3Client, DeleteObjectCommand, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { SignatureV4 } = require('@smithy/signature-v4');
@@ -8,7 +7,6 @@ const logger = require('./logger');
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 
-// Trim to guard against Railway env vars with accidental trailing whitespace/newlines
 const R2_ACCOUNT_ID        = (process.env.R2_ACCOUNT_ID        || '').trim();
 const R2_ACCESS_KEY_ID     = (process.env.R2_ACCESS_KEY_ID     || '').trim();
 const R2_SECRET_ACCESS_KEY = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
@@ -18,7 +16,7 @@ const R2_PUBLIC_URL        = (process.env.R2_PUBLIC_URL        || '').trim();
 const useR2 = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME);
 
 // S3Client is used only for delete operations.
-// Uploads use a manually-signed https.request (see uploadLocalFileToR2).
+// Uploads use browser-direct presigned URLs (see getPresignedPutUrl).
 const s3 = useR2 ? new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -30,11 +28,11 @@ if (useR2) {
   logger.info({
     host: `${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`,
     bucket: R2_BUCKET_NAME,
+    mode: 'presigned-url (browser-direct)',
   }, '[storage] R2 configured');
 }
 
-// SHA-256 implementation backed by Node.js built-in crypto.
-// Required by @smithy/signature-v4 which needs a HashConstructor.
+// SHA-256 backed by Node.js built-in crypto — required by @smithy/signature-v4
 class NodeSha256 {
   constructor() { this._h = crypto.createHash('sha256'); }
   update(data, enc) {
@@ -44,27 +42,14 @@ class NodeSha256 {
   digest() { return Promise.resolve(this._h.digest()); }
 }
 
-// Upload a file to R2.
-//
-// WHY we bypass the AWS SDK's S3Client for this operation:
-// Despite forcePathStyle:true, @aws-sdk/client-s3 v3 rewrites the URL to
-// virtual-hosted style  →  {bucket}.{accountId}.r2.cloudflarestorage.com
-// Cloudflare only has a cert for *.r2.cloudflarestorage.com (one wildcard level),
-// so {bucket}.{accountId}.r2.cloudflarestorage.com has NO valid cert and every
-// TLS handshake fails with ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE (alert 40).
-//
-// Fix: build the URL ourselves (always path-style), sign with SigV4 via
-// @smithy/signature-v4 (already a transitive dep), then send with https.request.
-// The target hostname  →  {accountId}.r2.cloudflarestorage.com  matches the cert.
-async function uploadLocalFileToR2(localPath, key, mimeType) {
-  const body = fs.readFileSync(localPath);
+// Generate a presigned PUT URL for browser-direct upload.
+// This is pure local computation — no network call is made.
+// The browser then PUT-s the file directly to R2, bypassing the server's
+// broken TLS path to r2.cloudflarestorage.com entirely.
+async function getPresignedPutUrl(key, mimeType, expiresIn = 300) {
   const host = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
-  // Encode each path segment but preserve the slash separator
   const encodedKey = key.split('/').map(encodeURIComponent).join('/');
   const urlPath = `/${R2_BUCKET_NAME}/${encodedKey}`;
-  const contentType = mimeType || 'application/octet-stream';
-
-  logger.info({ host, urlPath, size: body.length }, '[storage] R2 upload start');
 
   const signer = new SignatureV4({
     service: 's3',
@@ -73,51 +58,28 @@ async function uploadLocalFileToR2(localPath, key, mimeType) {
     sha256: NodeSha256,
   });
 
-  const signed = await signer.sign({
-    method: 'PUT',
-    hostname: host,
-    protocol: 'https:',
-    path: urlPath,
-    headers: {
-      host,
-      'content-type': contentType,
-      'content-length': String(body.length),
+  const presigned = await signer.presign(
+    {
+      method: 'PUT',
+      hostname: host,
+      protocol: 'https:',
+      path: urlPath,
+      headers: { host },
     },
-    body,
-  });
+    {
+      expiresIn,
+      // Don't sign content-type/content-length so the browser can set them freely
+      unsignableHeaders: new Set(['content-type', 'content-length']),
+    },
+  );
 
-  // Remove 'host' from signed.headers — Node.js https sets it from `hostname`
-  // and a duplicate can cause request issues.
-  const { host: _h, ...reqHeaders } = signed.headers;
+  const qs = Object.entries(presigned.query || {})
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(Array.isArray(v) ? v[0] : v)}`)
+    .join('&');
 
-  await new Promise((resolve, reject) => {
-    const req = https.request(
-      { hostname: host, port: 443, path: urlPath, method: 'PUT', headers: reqHeaders },
-      (res) => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          res.resume();
-          logger.info({ host, urlPath, status: res.statusCode }, '[storage] R2 upload ok');
-          return resolve();
-        }
-        let errData = '';
-        res.on('data', d => { errData += d; });
-        res.on('end', () => {
-          const msg = `R2 HTTP ${res.statusCode}: ${errData.slice(0, 300)}`;
-          logger.error({ host, urlPath, status: res.statusCode, body: errData.slice(0, 300) }, '[storage] R2 upload failed');
-          reject(new Error(msg));
-        });
-      },
-    );
-    req.on('error', (err) => {
-      logger.error({ host, urlPath, code: err.code, message: err.message }, '[storage] R2 upload network error');
-      reject(err);
-    });
-    req.write(body);
-    req.end();
-  });
-
-  try { fs.unlinkSync(localPath); } catch { /* ignore cleanup error */ }
-  return key;
+  const url = `https://${host}${urlPath}?${qs}`;
+  logger.info({ key, expiresIn }, '[storage] presigned PUT URL generated');
+  return url;
 }
 
 async function deleteStoredFile(fileRecord) {
@@ -176,4 +138,4 @@ function filePublicUrl(key) {
     : `uploads/${key}`;
 }
 
-module.exports = { UPLOADS_DIR, useR2, s3, uploadLocalFileToR2, deleteStoredFile, deleteUserFiles, filePublicUrl };
+module.exports = { UPLOADS_DIR, useR2, s3, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl };

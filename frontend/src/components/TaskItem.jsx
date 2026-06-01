@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { api, apiForm } from '../api';
+import { api, apiUpload } from '../api';
 import DOMPurify from 'dompurify';
 import MentionInput from './MentionInput';
 import Avatar from './Avatar';
@@ -253,11 +253,7 @@ export default function TaskItem({
   const handleFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     for (let i = 0; i < files.length; i++) {
-      const fd = new FormData();
-      fd.append('projectId', project.id);
-      fd.append('taskId', task.id);
-      fd.append('file', files[i]);
-      await apiForm('upload_task_file', fd);
+      await apiUpload(files[i], { type: 'task', projectId: project.id, taskId: task.id });
     }
     fileInputRef.current.value = '';
     onUploadComplete();

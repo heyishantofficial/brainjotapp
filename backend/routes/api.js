@@ -12,7 +12,7 @@ const Space = require('../models/Space');
 const User = require('../models/User');
 const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
-const { UPLOADS_DIR, useR2, uploadLocalFileToR2, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
+const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -140,6 +140,11 @@ const uploadAvatar = multer({
 
 function conditionalUpload(req, res, next) {
   const action = req.query.action;
+  // In R2 mode, file uploads are browser-direct via presigned URLs — no server-side
+  // multipart handling needed. Skip multer entirely and let the route handlers respond.
+  if (useR2 && (action === 'upload' || action === 'upload_task_file' || action === 'upload_avatar')) {
+    return next();
+  }
   if (action === 'upload' || action === 'upload_task_file') {
     upload.single('file')(req, res, (err) => {
       if (!err) return next();
@@ -148,7 +153,6 @@ function conditionalUpload(req, res, next) {
         if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'File too large (max 50MB)' });
         return res.status(400).json({ error: err.message });
       }
-      // fileFilter rejection or unknown error
       res.status(400).json({ error: err.message || 'Upload failed' });
     });
   } else if (action === 'upload_avatar') {
@@ -434,6 +438,47 @@ router.get('/', apiLimiter, async (req, res) => {
     return;
   }
 
+  // ── get_upload_url ──────────────────────────────────────────────
+  // Returns a presigned PUT URL so the browser uploads directly to R2.
+  // In disk mode, returns { diskMode: true } — frontend falls back to multipart.
+  if (action === 'get_upload_url') {
+    if (!useR2) { res.json({ ok: true, diskMode: true }); return; }
+
+    const { filename, mimeType, size, type, projectId, taskId } = req.query;
+    if (!filename || !type) { res.status(400).json({ error: 'filename and type required' }); return; }
+
+    const ext = path.extname(filename).toLowerCase().replace('.', '');
+    const maxBytes = type === 'avatar' ? 2 * 1024 * 1024 : 50 * 1024 * 1024;
+    if (size && Number(size) > maxBytes) {
+      return res.status(400).json({ error: type === 'avatar' ? 'Avatar too large (max 2MB)' : 'File too large (max 50MB)' });
+    }
+
+    if (type === 'avatar') {
+      if (!['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) {
+        return res.status(400).json({ error: 'Avatar must be jpg/png/webp/gif' });
+      }
+    } else {
+      if (!ALLOWED_EXT.has(ext)) return res.status(400).json({ error: 'File type not allowed' });
+    }
+
+    let key;
+    if (type === 'avatar') {
+      key = `avatars/${userId}.jpg`;
+    } else if (type === 'task') {
+      if (!projectId || !taskId) return res.status(400).json({ error: 'projectId and taskId required' });
+      key = makeKey(taskId, projectId, ext);
+    } else {
+      if (!projectId) return res.status(400).json({ error: 'projectId required' });
+      key = makeKey(null, projectId, ext);
+    }
+
+    const fileId = uid();
+    const uploadUrl = await getPresignedPutUrl(key, mimeType || 'application/octet-stream');
+    logger.info({ userId, type, key, fileId }, '[upload] presigned URL issued');
+    res.json({ ok: true, uploadUrl, fileKey: key, fileId });
+    return;
+  }
+
   res.status(404).json({ error: 'Unknown action' });
 });
 
@@ -572,21 +617,11 @@ router.post('/', apiLimiter, async (req, res, next) => {
     return;
   }
 
-  // ── upload_avatar ──
+  // ── upload_avatar (disk mode only — R2 uses get_upload_url + confirm_upload) ──
   if (action === 'upload_avatar') {
+    if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     if (!req.file) { res.status(400).json({ error: 'No file received' }); return; }
-    const r2Key = `avatars/${userId}.jpg`;
-    let key = r2Key;
-    if (useR2) {
-      try {
-        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
-      } catch (err) {
-        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
-        logger.error({ err: err.message, code: err.name }, '[upload] R2 avatar upload failed');
-        return res.status(500).json({ error: 'Avatar upload failed: ' + err.message });
-      }
-    }
-    const avatarUrl = filePublicUrl(key);
+    const avatarUrl = filePublicUrl(`avatars/${userId}.jpg`);
     await User.updateOne({ id: userId }, { avatarUrl });
     res.json({ ok: true, avatarUrl });
     return;
@@ -1069,54 +1104,59 @@ router.post('/', apiLimiter, async (req, res, next) => {
     return;
   }
 
-  // ── upload (project-level) ──
+  // ── confirm_upload (R2 mode: browser finished uploading to R2, save metadata to DB) ──
+  if (action === 'confirm_upload') {
+    const { fileId, fileKey, filename, mimeType, size, type, projectId, taskId } = req.body;
+    if (!fileId || !fileKey || !filename || !type) { return res.status(400).json({ error: 'Missing required fields' }); }
+    const ext = path.extname(filename).toLowerCase().replace('.', '');
+    const fe = { id: fileId, name: filename, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: Number(size) || 0, uploaded: now() };
+
+    if (type === 'avatar') {
+      await User.updateOne({ id: userId }, { avatarUrl: fe.url });
+      logger.info({ userId, fileKey }, '[upload] avatar confirmed');
+      return res.json({ ok: true, avatarUrl: fe.url });
+    }
+    if (type === 'task') {
+      if (!projectId || !taskId) return res.status(400).json({ error: 'projectId and taskId required' });
+      const result = await Project.updateOne(
+        { id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] },
+        { $push: { 'tasks.$.files': fe } },
+      );
+      if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
+      logger.info({ userId, fileId, fileKey, projectId, taskId }, '[upload] task file confirmed');
+      return res.json({ ok: true, file: fe });
+    }
+    // type === 'project'
+    if (!projectId) return res.status(400).json({ error: 'projectId required' });
+    const result = await Project.updateOne(
+      { id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] },
+      { $push: { files: fe } },
+    );
+    if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
+    logger.info({ userId, fileId, fileKey, projectId }, '[upload] project file confirmed');
+    return res.json({ ok: true, file: fe });
+  }
+
+  // ── upload (project-level, disk mode only) ──
   if (action === 'upload') {
+    if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     const pid = req.body.projectId;
-    logger.info({ pid, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] project file attempt');
     if (!pid || !req.file) { res.status(400).json({ error: !pid ? 'Missing projectId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
-    const r2Key = makeKey(null, pid, ext);
-    let fileKey;
-    if (useR2) {
-      try {
-        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
-      } catch (err) {
-        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
-        logger.error({ err: err.message, code: err.name, key: r2Key }, '[upload] R2 project file upload failed');
-        return res.status(500).json({ error: 'Storage upload failed: ' + err.message });
-      }
-      fileKey = r2Key;
-    } else {
-      fileKey = req.file.filename;
-    }
-    const fe = { id: uid(), name: req.file.originalname, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: req.file.size, uploaded: now() };
+    const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: pid, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { files: fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
     return;
   }
 
-  // ── upload_task_file ──
+  // ── upload_task_file (disk mode only) ──
   if (action === 'upload_task_file') {
+    if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     const { projectId, taskId } = req.body;
-    logger.info({ projectId, taskId, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] task file attempt');
     if (!projectId || !taskId || !req.file) { res.status(400).json({ error: !projectId ? 'Missing projectId' : !taskId ? 'Missing taskId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
-    const r2Key = makeKey(taskId, projectId, ext);
-    let fileKey;
-    if (useR2) {
-      try {
-        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
-      } catch (err) {
-        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
-        logger.error({ err: err.message, code: err.name, key: r2Key }, '[upload] R2 task file upload failed');
-        return res.status(500).json({ error: 'Storage upload failed: ' + err.message });
-      }
-      fileKey = r2Key;
-    } else {
-      fileKey = req.file.filename;
-    }
-    const fe = { id: uid(), name: req.file.originalname, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: req.file.size, uploaded: now() };
+    const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { 'tasks.$.files': fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
