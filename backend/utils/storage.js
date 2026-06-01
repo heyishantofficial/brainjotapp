@@ -35,13 +35,16 @@ if (useR2) {
 
 // Upload a local file to R2 and delete the local copy on success.
 // Returns the R2 key on success, throws on failure.
+// Uses readFileSync (Buffer) so FetchHttpHandler/undici gets a known-length body
+// rather than a Node.js ReadStream which fetch doesn't handle reliably.
 async function uploadLocalFileToR2(localPath, key, mimeType) {
-  const body = fs.createReadStream(localPath);
+  const body = fs.readFileSync(localPath);
   await s3.send(new PutObjectCommand({
     Bucket: R2_BUCKET_NAME,
     Key: key,
     Body: body,
     ContentType: mimeType || 'application/octet-stream',
+    ContentLength: body.length,
   }));
   try { fs.unlinkSync(localPath); } catch { /* ignore cleanup error */ }
   return key;

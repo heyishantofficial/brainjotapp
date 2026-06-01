@@ -578,8 +578,13 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const r2Key = `avatars/${userId}.jpg`;
     let key = r2Key;
     if (useR2) {
-      const localPath = req.file.path;
-      await uploadLocalFileToR2(localPath, r2Key, req.file.mimetype);
+      try {
+        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      } catch (err) {
+        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+        logger.error({ err: err.message, code: err.name }, '[upload] R2 avatar upload failed');
+        return res.status(500).json({ error: 'Avatar upload failed: ' + err.message });
+      }
     }
     const avatarUrl = filePublicUrl(key);
     await User.updateOne({ id: userId }, { avatarUrl });
@@ -1073,7 +1078,13 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const r2Key = makeKey(null, pid, ext);
     let fileKey;
     if (useR2) {
-      await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      try {
+        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      } catch (err) {
+        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+        logger.error({ err: err.message, code: err.name, key: r2Key }, '[upload] R2 project file upload failed');
+        return res.status(500).json({ error: 'Storage upload failed: ' + err.message });
+      }
       fileKey = r2Key;
     } else {
       fileKey = req.file.filename;
@@ -1094,7 +1105,13 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const r2Key = makeKey(taskId, projectId, ext);
     let fileKey;
     if (useR2) {
-      await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      try {
+        await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      } catch (err) {
+        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+        logger.error({ err: err.message, code: err.name, key: r2Key }, '[upload] R2 task file upload failed');
+        return res.status(500).json({ error: 'Storage upload failed: ' + err.message });
+      }
       fileKey = r2Key;
     } else {
       fileKey = req.file.filename;
