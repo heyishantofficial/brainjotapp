@@ -341,7 +341,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       const fd = new FormData();
       fd.append('projectId', project.id);
       fd.append('file', files[i]);
-      await apiForm('upload', fd);
+      const r = await apiForm('upload', fd);
+      if (r?.error) { onToast(r.error); }
       setUploadProgress({ done: i + 1, total: files.length });
     }
     fileInputRef.current.value = '';

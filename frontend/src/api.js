@@ -28,10 +28,13 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
 
 export async function apiForm(action, fd) {
   try {
-    const res = await apiInstance.post(`?action=${action}`, fd);
-    return res.data;
+    const res = await fetch(`/api?action=${action}`, {
+      method: 'POST',
+      body: fd,
+      credentials: 'include',
+    });
+    return await res.json();
   } catch (error) {
-    if (error.response?.data) return error.response.data;
     throw error;
   }
 }
