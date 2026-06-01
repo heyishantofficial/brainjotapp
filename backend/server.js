@@ -116,6 +116,13 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/admin', adminRouter);
 app.use('/api', apiRouter.router);
 
+// Serve user-uploaded files (avatars, project/task attachments) — local disk only
+// When R2 is configured, files are served directly from the R2 public URL
+const { UPLOADS_DIR } = require('./utils/storage');
+if (!process.env.R2_ACCOUNT_ID) {
+  app.use('/uploads', express.static(UPLOADS_DIR));
+}
+
 // Serve the built React frontend (production)
 const FRONTEND_DIST = path.join(__dirname, 'public');
 if (fs.existsSync(FRONTEND_DIST)) {
