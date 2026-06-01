@@ -28,13 +28,17 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
 
 export async function apiForm(action, fd) {
   try {
+    if (import.meta.env.DEV) console.log(`[UPLOAD] ${action}`, [...fd.entries()].map(([k, v]) => `${k}=${v instanceof File ? v.name + '/' + v.type + '/' + v.size : v}`));
     const res = await fetch(`/api?action=${action}`, {
       method: 'POST',
       body: fd,
       credentials: 'include',
     });
-    return await res.json();
+    const data = await res.json();
+    if (import.meta.env.DEV) console.log(`[UPLOAD RESULT] ${action}`, res.status, data);
+    return data;
   } catch (error) {
-    throw error;
+    if (import.meta.env.DEV) console.error(`[UPLOAD ERROR] ${action}`, error);
+    return { error: error.message || 'Network error' };
   }
 }

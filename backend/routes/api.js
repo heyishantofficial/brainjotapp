@@ -150,9 +150,26 @@ const uploadAvatar = multer({
 function conditionalUpload(req, res, next) {
   const action = req.query.action;
   if (action === 'upload' || action === 'upload_task_file') {
-    upload.single('file')(req, res, next);
+    upload.single('file')(req, res, (err) => {
+      if (!err) return next();
+      const multer = require('multer');
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'File too large (max 50MB)' });
+        return res.status(400).json({ error: err.message });
+      }
+      // fileFilter rejection or unknown error
+      res.status(400).json({ error: err.message || 'Upload failed' });
+    });
   } else if (action === 'upload_avatar') {
-    uploadAvatar.single('file')(req, res, next);
+    uploadAvatar.single('file')(req, res, (err) => {
+      if (!err) return next();
+      const multer = require('multer');
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Avatar too large (max 2MB)' });
+        return res.status(400).json({ error: err.message });
+      }
+      res.status(400).json({ error: err.message || 'Upload failed' });
+    });
   } else {
     next();
   }
@@ -1054,7 +1071,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── upload (project-level) ──
   if (action === 'upload') {
     const pid = req.body.projectId;
-    if (!pid || !req.file) { res.status(400).json({ error: 'Missing data' }); return; }
+    logger.info({ pid, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] project file attempt');
+    if (!pid || !req.file) { res.status(400).json({ error: !pid ? 'Missing projectId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const key = useR2 ? req.file.key : req.file.filename;
     const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
@@ -1067,7 +1085,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── upload_task_file ──
   if (action === 'upload_task_file') {
     const { projectId, taskId } = req.body;
-    if (!projectId || !taskId || !req.file) { res.status(400).json({ error: 'Missing data' }); return; }
+    logger.info({ projectId, taskId, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] task file attempt');
+    if (!projectId || !taskId || !req.file) { res.status(400).json({ error: !projectId ? 'Missing projectId' : !taskId ? 'Missing taskId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const key = useR2 ? req.file.key : req.file.filename;
     const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
