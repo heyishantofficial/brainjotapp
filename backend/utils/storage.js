@@ -1,32 +1,60 @@
 const path = require('path');
 const fs = require('fs');
-const { S3Client, DeleteObjectCommand, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { S3Client, DeleteObjectCommand, DeleteObjectsCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { FetchHttpHandler } = require('@smithy/fetch-http-handler');
 const logger = require('./logger');
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 
-const useR2 = !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
+// Trim to guard against Railway env vars with accidental trailing whitespace/newlines
+const R2_ACCOUNT_ID     = (process.env.R2_ACCOUNT_ID     || '').trim();
+const R2_ACCESS_KEY_ID  = (process.env.R2_ACCESS_KEY_ID  || '').trim();
+const R2_SECRET_ACCESS_KEY = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+const R2_BUCKET_NAME    = (process.env.R2_BUCKET_NAME    || '').trim();
+const R2_PUBLIC_URL     = (process.env.R2_PUBLIC_URL     || '').trim();
 
+const useR2 = !!(R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_BUCKET_NAME);
+
+// Use FetchHttpHandler (undici-backed) instead of the default NodeHttpHandler to
+// avoid TLS handshake failures that affect the Node.js http module with some
+// Cloudflare R2 endpoints in containerised environments.
 const s3 = useR2 ? new S3Client({
   region: 'auto',
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    accessKeyId: R2_ACCESS_KEY_ID,
+    secretAccessKey: R2_SECRET_ACCESS_KEY,
   },
   forcePathStyle: true,
+  requestHandler: new FetchHttpHandler(),
 }) : null;
+
+if (useR2) {
+  logger.info({ endpoint: `https://${R2_ACCOUNT_ID.slice(0, 6)}***.r2.cloudflarestorage.com`, bucket: R2_BUCKET_NAME }, '[storage] R2 configured');
+}
+
+// Upload a local file to R2 and delete the local copy on success.
+// Returns the R2 key on success, throws on failure.
+async function uploadLocalFileToR2(localPath, key, mimeType) {
+  const body = fs.createReadStream(localPath);
+  await s3.send(new PutObjectCommand({
+    Bucket: R2_BUCKET_NAME,
+    Key: key,
+    Body: body,
+    ContentType: mimeType || 'application/octet-stream',
+  }));
+  try { fs.unlinkSync(localPath); } catch { /* ignore cleanup error */ }
+  return key;
+}
 
 async function deleteStoredFile(fileRecord) {
   if (useR2) {
     try {
-      await s3.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET_NAME, Key: fileRecord.file }));
+      await s3.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: fileRecord.file }));
     } catch (err) {
       const code = err?.name || err?.Code;
-      // Suppress "file already gone" — surface everything else (auth errors, throttling, network)
       if (code !== 'NoSuchKey' && code !== 'NotFound') {
         logger.error({ key: fileRecord.file, code, message: err.message }, '[storage] R2 delete failed');
-        // Hook point: Sentry.captureException(err, { extra: { key: fileRecord.file } });
       }
     }
   } else {
@@ -35,8 +63,6 @@ async function deleteStoredFile(fileRecord) {
   }
 }
 
-// Delete all files belonging to a user (projects + tasks + avatar).
-// Accepts an array of project documents (lean objects).
 async function deleteUserFiles(userId, projects = []) {
   const keys = [];
   for (const proj of projects) {
@@ -53,7 +79,7 @@ async function deleteUserFiles(userId, projects = []) {
     for (const chunk of chunks) {
       try {
         await s3.send(new DeleteObjectsCommand({
-          Bucket: process.env.R2_BUCKET_NAME,
+          Bucket: R2_BUCKET_NAME,
           Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true },
         }));
       } catch (err) {
@@ -73,8 +99,8 @@ async function deleteUserFiles(userId, projects = []) {
 
 function filePublicUrl(key) {
   return useR2
-    ? `${process.env.R2_PUBLIC_URL}/${key}`
+    ? `${R2_PUBLIC_URL}/${key}`
     : `uploads/${key}`;
 }
 
-module.exports = { UPLOADS_DIR, useR2, s3, deleteStoredFile, deleteUserFiles, filePublicUrl };
+module.exports = { UPLOADS_DIR, useR2, s3, uploadLocalFileToR2, deleteStoredFile, deleteUserFiles, filePublicUrl };

@@ -6,14 +6,13 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
-const multerS3 = require('multer-s3');
 const { Resend } = require('resend');
 const Project = require('../models/Project');
 const Space = require('../models/Space');
 const User = require('../models/User');
 const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
-const { UPLOADS_DIR, useR2, s3, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
+const { UPLOADS_DIR, useR2, uploadLocalFileToR2, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -88,30 +87,28 @@ const ALLOWED_MIME_PREFIXES = new Set([
   'application/vnd.ms-', 'application/zip', 'text/',
 ]);
 
-function makeKey(req, file) {
-  const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
-  const tid = req.body.taskId;
-  const pid = req.body.projectId;
-  const prefix = tid ? `task_${tid}_` : `${pid}_`;
+function makeKey(taskId, projectId, ext) {
+  const prefix = taskId ? `task_${taskId}_` : `${projectId}_`;
   return `${prefix}${crypto.randomUUID()}.${ext}`;
 }
 
-const storage = useR2
-  ? multerS3({
-      s3,
-      bucket: process.env.R2_BUCKET_NAME,
-      key: (req, file, cb) => cb(null, makeKey(req, file)),
-    })
-  : multer.diskStorage({
-      destination(_req, _file, cb) {
-        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-        cb(null, UPLOADS_DIR);
-      },
-      filename: (req, file, cb) => cb(null, makeKey(req, file)),
-    });
+// Always save to disk first. If R2 is configured, the handler manually pushes
+// the file to R2 after multer writes it locally and then deletes the temp copy.
+// This avoids multerS3 streaming directly to R2, which caused SSL handshake
+// failures in containerised environments.
+const diskStorage = multer.diskStorage({
+  destination(_req, _file, cb) {
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    cb(null, UPLOADS_DIR);
+  },
+  filename(_req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
+    cb(null, `tmp_${crypto.randomUUID()}.${ext}`);
+  },
+});
 
 const upload = multer({
-  storage,
+  storage: diskStorage,
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
@@ -121,24 +118,18 @@ const upload = multer({
   },
 });
 
-const avatarStorage = useR2
-  ? multerS3({
-      s3,
-      bucket: process.env.R2_BUCKET_NAME,
-      key: (req, _file, cb) => cb(null, `avatars/${req.session.userId}.jpg`),
-    })
-  : multer.diskStorage({
-      destination(_req, _file, cb) {
-        const dir = path.join(UPLOADS_DIR, 'avatars');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
-      },
-      filename: (req, _file, cb) => cb(null, `${req.session.userId}.jpg`),
-    });
+const avatarDiskStorage = multer.diskStorage({
+  destination(_req, _file, cb) {
+    const dir = path.join(UPLOADS_DIR, 'avatars');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, _file, cb) => cb(null, `${req.session.userId}.jpg`),
+});
 const ALLOWED_AVATAR_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
 const ALLOWED_AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const uploadAvatar = multer({
-  storage: avatarStorage,
+  storage: avatarDiskStorage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter(_req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
@@ -584,7 +575,12 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── upload_avatar ──
   if (action === 'upload_avatar') {
     if (!req.file) { res.status(400).json({ error: 'No file received' }); return; }
-    const key = `avatars/${userId}.jpg`;
+    const r2Key = `avatars/${userId}.jpg`;
+    let key = r2Key;
+    if (useR2) {
+      const localPath = req.file.path;
+      await uploadLocalFileToR2(localPath, r2Key, req.file.mimetype);
+    }
     const avatarUrl = filePublicUrl(key);
     await User.updateOne({ id: userId }, { avatarUrl });
     res.json({ ok: true, avatarUrl });
@@ -1074,8 +1070,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
     logger.info({ pid, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] project file attempt');
     if (!pid || !req.file) { res.status(400).json({ error: !pid ? 'Missing projectId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
-    const key = useR2 ? req.file.key : req.file.filename;
-    const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
+    const r2Key = makeKey(null, pid, ext);
+    let fileKey;
+    if (useR2) {
+      await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      fileKey = r2Key;
+    } else {
+      fileKey = req.file.filename;
+    }
+    const fe = { id: uid(), name: req.file.originalname, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: pid, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { files: fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
@@ -1088,8 +1091,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
     logger.info({ projectId, taskId, hasFile: !!req.file, fileName: req.file?.originalname, mimeType: req.file?.mimetype, size: req.file?.size, userId }, '[upload] task file attempt');
     if (!projectId || !taskId || !req.file) { res.status(400).json({ error: !projectId ? 'Missing projectId' : !taskId ? 'Missing taskId' : 'No file received' }); return; }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
-    const key = useR2 ? req.file.key : req.file.filename;
-    const fe = { id: uid(), name: req.file.originalname, file: key, url: filePublicUrl(key), type: ext, size: req.file.size, uploaded: now() };
+    const r2Key = makeKey(taskId, projectId, ext);
+    let fileKey;
+    if (useR2) {
+      await uploadLocalFileToR2(req.file.path, r2Key, req.file.mimetype);
+      fileKey = r2Key;
+    } else {
+      fileKey = req.file.filename;
+    }
+    const fe = { id: uid(), name: req.file.originalname, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { 'tasks.$.files': fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     res.json({ ok: true, file: fe });
