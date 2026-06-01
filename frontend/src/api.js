@@ -28,9 +28,7 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
 
 export async function apiForm(action, fd) {
   try {
-    const res = await apiInstance.post(`?action=${action}`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const res = await apiInstance.post(`?action=${action}`, fd);
     return res.data;
   } catch (error) {
     if (error.response?.data) return error.response.data;
