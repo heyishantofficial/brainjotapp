@@ -33,11 +33,10 @@ const CamOffIcon = () => (
     <line x1="1" y1="1" x2="23" y2="23"/>
   </svg>
 );
-// Full phone receiver + diagonal slash — clearly recognizable as "end call"
-const PhoneHangupIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.42 2 2 0 0 1 3.62 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 8.91a16 16 0 0 0 5.91 5.91l.77-.77a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-    <line x1="1" y1="1" x2="23" y2="23"/>
+// End call = plain X — unambiguous on a red button
+const EndCallIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
   </svg>
 );
 const UserPlusIcon = () => (
@@ -504,7 +503,7 @@ export default function CallRoom({
         </CtrlBtn>
       )}
       <CtrlBtn title={isHost ? 'End call for everyone' : 'Leave call'} danger onClick={handleEnd} size={large ? 56 : 42}>
-        <PhoneHangupIcon />
+        <EndCallIcon />
       </CtrlBtn>
     </div>
   );

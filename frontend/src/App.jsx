@@ -20,6 +20,7 @@ import NotificationModal from './components/NotificationModal';
 import ProfileView from './views/ProfileView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
 import CallRoom from './components/CallRoom';
+import GlobalCallNotification from './components/GlobalCallNotification';
 import CallBanner from './components/CallBanner';
 
 // Lazy-loaded: heavy or rarely-used chunks loaded on demand
@@ -682,6 +683,35 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      {/* Global call notifications — show for any project/space not currently on screen */}
+      {livekitEnabled && loggedIn && !myActiveCall && (() => {
+        const currentEntityId = (currentProjectId || currentSharedProjectId || currentSpaceId || currentSharedSpaceId);
+        const allProjects = [...(appData.projects || []), ...sharedProjects];
+        const allSpaces = [...(appData.spaces || []), ...sharedSpaces];
+        const globalCalls = Array.from(activeCalls.entries())
+          .filter(([callId, call]) =>
+            call.hostUserId !== currentUser?.id &&
+            !dismissedCalls.has(callId) &&
+            callId !== currentEntityId
+          )
+          .map(([callId, call]) => {
+            const entity = call.entityType === 'space'
+              ? allSpaces.find(s => s.id === callId)
+              : allProjects.find(p => p.id === callId);
+            return { callId, ...call, entityName: entity?.title || null, isInvited: invitedCalls.has(callId) };
+          });
+        if (globalCalls.length === 0) return null;
+        return (
+          <GlobalCallNotification
+            calls={globalCalls}
+            onJoin={(c) => startCall(c.callId, c.callType, c.entityType || 'project', false)}
+            onRequestJoin={(c) => requestJoinCall(c.callId)}
+            onDismiss={(callId) => setDismissedCalls(prev => new Set([...prev, callId]))}
+            requestSent={callRequestSent}
+          />
+        );
+      })()}
 
       <Toast toast={toastData} onClear={() => setToastData(null)} />
       {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
