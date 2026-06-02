@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 const initials = (n = '') =>
   n.split(' ').filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join('') || '?';
 
-// ── SVG Icons ────────────────────────────────────────────────────────────────
+// ── Icons ────────────────────────────────────────────────────────────────────
 const MicIcon = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -33,10 +33,11 @@ const CamOffIcon = () => (
     <line x1="1" y1="1" x2="23" y2="23"/>
   </svg>
 );
-const PhoneOffIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 3.07 5.49"/>
-    <path d="M22 2 2 22"/>
+// Full phone receiver + diagonal slash — clearly recognizable as "end call"
+const PhoneHangupIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.42 2 2 0 0 1 3.62 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 8.91a16 16 0 0 0 5.91 5.91l.77-.77a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+    <line x1="1" y1="1" x2="23" y2="23"/>
   </svg>
 );
 const UserPlusIcon = () => (
@@ -74,40 +75,134 @@ const GripIcon = () => (
   </svg>
 );
 
-// ── Audio Waveform (div-bar based, smooth animated) ──────────────────────────
-function AudioWaveform({ active, barCount = 24 }) {
-  const [heights, setHeights] = useState(() => Array(barCount).fill(3));
+// ── Audio Waveform — canvas bars driven by Web Audio API ─────────────────────
+function AudioWaveform({ audioStream, active, barCount = 24, height = 48 }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const analyserRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const rafRef = useRef(null);
+  const barsRef = useRef(Array(barCount).fill(0.04));
 
+  // Wire up AudioContext + AnalyserNode to the mic MediaStream
   useEffect(() => {
-    if (!active) { setHeights(Array(barCount).fill(3)); return; }
-    const id = setInterval(() => {
-      setHeights(Array.from({ length: barCount }, (_, i) => {
-        const center = i / (barCount - 1); // 0..1
-        const envelope = Math.sin(center * Math.PI); // peaks in middle
-        const base = 4 + envelope * 22;
-        return Math.max(3, base + (Math.random() - 0.45) * 18);
-      }));
-    }, 110);
-    return () => clearInterval(id);
-  }, [active, barCount]);
+    if (!audioStream) return;
+    let ctx, source, analyser;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      source = ctx.createMediaStreamSource(audioStream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 128;           // 64 frequency bins
+      analyser.smoothingTimeConstant = 0.82;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+    } catch (_) {}
+    return () => {
+      analyserRef.current = null;
+      audioCtxRef.current = null;
+      try { ctx?.close(); } catch (_) {}
+    };
+  }, [audioStream]);
+
+  // Canvas draw loop
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const W = container.clientWidth || 240;
+    const H = height;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx2d = canvas.getContext('2d');
+    ctx2d.scale(dpr, dpr);
+
+    let simTime = 0;
+
+    const draw = () => {
+      rafRef.current = requestAnimationFrame(draw);
+      simTime += 0.04;
+
+      let rawHeights;
+      const analyser = analyserRef.current;
+
+      if (analyser && active) {
+        // Real audio frequency data
+        const bufLen = analyser.frequencyBinCount;
+        const data = new Uint8Array(bufLen);
+        analyser.getByteFrequencyData(data);
+        rawHeights = Array.from({ length: barCount }, (_, i) => {
+          const start = Math.floor(i * bufLen / barCount);
+          const end = Math.floor((i + 1) * bufLen / barCount);
+          let sum = 0;
+          for (let j = start; j < end; j++) sum += data[j];
+          const avg = sum / Math.max(1, end - start) / 255;
+          // Soft center-emphasis envelope so bass/treble extremes don't dominate
+          const c = Math.abs(i / barCount - 0.5) * 2;
+          return avg * (0.5 + (1 - c) * 0.5);
+        });
+      } else if (active) {
+        // Animated idle wave (no analyser yet)
+        rawHeights = Array.from({ length: barCount }, (_, i) => {
+          const c = Math.abs(i / barCount - 0.5) * 2;
+          return Math.max(0.04, 0.18 + Math.sin(simTime + i * 0.4) * 0.12 + (1 - c) * 0.15);
+        });
+      } else {
+        // Flat line when muted or disconnected
+        rawHeights = Array(barCount).fill(0.04);
+      }
+
+      // Smooth bars toward target
+      const bars = barsRef.current;
+      for (let i = 0; i < barCount; i++) {
+        bars[i] += (rawHeights[i] - bars[i]) * 0.2;
+      }
+
+      ctx2d.clearRect(0, 0, W, H);
+      const barW = Math.max(2, Math.floor((W - (barCount - 1) * 2.5) / barCount));
+
+      for (let i = 0; i < barCount; i++) {
+        const barH = Math.max(2, bars[i] * H * 0.9);
+        const x = i * (barW + 2.5);
+        const y = (H - barH) / 2;
+        const r = Math.min(barW / 2, 2.5);
+
+        const alpha = 0.35 + bars[i] * 0.65;
+        const grad = ctx2d.createLinearGradient(0, y, 0, y + barH);
+        grad.addColorStop(0, `rgba(74,222,128,${Math.min(1, alpha + 0.2)})`);
+        grad.addColorStop(1, `rgba(34,197,94,${Math.min(1, alpha - 0.1)})`);
+        ctx2d.fillStyle = grad;
+
+        ctx2d.beginPath();
+        ctx2d.moveTo(x + r, y);
+        ctx2d.lineTo(x + barW - r, y);
+        ctx2d.arcTo(x + barW, y, x + barW, y + r, r);
+        ctx2d.lineTo(x + barW, y + barH - r);
+        ctx2d.arcTo(x + barW, y + barH, x + barW - r, y + barH, r);
+        ctx2d.lineTo(x + r, y + barH);
+        ctx2d.arcTo(x, y + barH, x, y + barH - r, r);
+        ctx2d.lineTo(x, y + r);
+        ctx2d.arcTo(x, y, x + r, y, r);
+        ctx2d.closePath();
+        ctx2d.fill();
+      }
+    };
+
+    draw();
+    return () => { cancelAnimationFrame(rafRef.current); };
+  }, [active, barCount, height, audioStream]); // re-init canvas when stream arrives
 
   return (
-    <div style={{ display: 'flex', gap: '2.5px', alignItems: 'center', height: '44px', width: '100%' }}>
-      {heights.map((h, i) => (
-        <div key={i} style={{
-          flex: 1,
-          height: `${h}px`,
-          borderRadius: '3px',
-          background: 'linear-gradient(180deg, rgba(74,222,128,0.85) 0%, rgba(34,197,94,0.35) 100%)',
-          transition: 'height 0.1s ease',
-        }} />
-      ))}
+    <div ref={containerRef} style={{ width: '100%', height: `${height}px` }}>
+      <canvas ref={canvasRef} style={{ width: '100%', height: `${height}px`, display: 'block' }} />
     </div>
   );
 }
 
 // ── Video attachment ─────────────────────────────────────────────────────────
-function VideoTile({ track, muted = false, style = {} }) {
+function VideoTile({ track, muted = false }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
@@ -116,10 +211,8 @@ function VideoTile({ track, muted = false, style = {} }) {
     return () => { try { track.detach(el); } catch {} };
   }, [track]);
   return (
-    <video
-      ref={ref} autoPlay playsInline muted={muted}
-      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px', background: '#0a0d16', ...style }}
-    />
+    <video ref={ref} autoPlay playsInline muted={muted}
+      style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#0a0d16' }} />
   );
 }
 
@@ -134,20 +227,18 @@ function AudioRenderer({ track }) {
   return <audio ref={ref} autoPlay style={{ display: 'none' }} />;
 }
 
-// ── Participant avatar (audio mode) ──────────────────────────────────────────
+// ── Audio avatar (audio-call mode) ───────────────────────────────────────────
 function AudioAvatar({ name, isMuted, isSpeaking, isLocal, size = 52 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
       <div style={{
         width: `${size}px`, height: `${size}px`, borderRadius: '50%', flexShrink: 0,
-        background: 'linear-gradient(135deg, rgba(74,222,128,0.2), rgba(34,197,94,0.08))',
-        border: isSpeaking
-          ? '2px solid rgba(74,222,128,0.8)'
-          : '2px solid rgba(255,255,255,0.1)',
+        background: 'linear-gradient(135deg, rgba(74,222,128,0.18), rgba(34,197,94,0.07))',
+        border: `2px solid ${isSpeaking ? 'rgba(74,222,128,0.75)' : 'rgba(255,255,255,0.1)'}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         color: isSpeaking ? '#4ade80' : 'rgba(255,255,255,0.7)',
         fontWeight: '700', fontSize: `${Math.round(size * 0.27)}px`,
-        boxShadow: isSpeaking ? '0 0 16px rgba(74,222,128,0.35)' : 'none',
+        boxShadow: isSpeaking ? '0 0 18px rgba(74,222,128,0.3)' : 'none',
         transition: 'border-color 0.2s, box-shadow 0.2s',
         position: 'relative',
       }}>
@@ -156,18 +247,21 @@ function AudioAvatar({ name, isMuted, isSpeaking, isLocal, size = 52 }) {
           <div style={{
             position: 'absolute', bottom: '-2px', right: '-2px',
             width: '16px', height: '16px', borderRadius: '50%',
-            background: 'rgba(239,68,68,0.9)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(239,68,68,0.9)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="1" y1="1" x2="23" y2="23"/>
-              <path d="M9 9v3a3 3 0 0 0 5.12 2.12"/>
-              <path d="M15 9.34V4a3 3 0 0 0-5.94-.6"/>
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
             </svg>
           </div>
         )}
       </div>
-      <span style={{ fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.55)', maxWidth: `${size + 8}px`, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', textAlign: 'center' }}>
+      <span style={{
+        fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.45)',
+        maxWidth: `${size + 8}px`, overflow: 'hidden', textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap', textAlign: 'center',
+      }}>
         {isLocal ? 'You' : name.split(' ')[0]}
       </span>
     </div>
@@ -175,14 +269,14 @@ function AudioAvatar({ name, isMuted, isSpeaking, isLocal, size = 52 }) {
 }
 
 // ── Video participant tile ────────────────────────────────────────────────────
-function VideoTileCard({ name, videoTrack, isMuted, isSpeaking, isLocal, style = {} }) {
+function VideoTileCard({ name, videoTrack, isMuted, isSpeaking, isLocal, fillHeight = false }) {
   return (
     <div style={{
       position: 'relative', borderRadius: '12px', overflow: 'hidden',
-      background: '#0a0d16', aspectRatio: '16/9',
-      border: isSpeaking ? '1.5px solid rgba(74,222,128,0.6)' : '1.5px solid rgba(255,255,255,0.05)',
+      background: '#0a0d16',
+      ...(fillHeight ? { height: '100%' } : { aspectRatio: '16/9' }),
+      border: `1.5px solid ${isSpeaking ? 'rgba(74,222,128,0.55)' : 'rgba(255,255,255,0.05)'}`,
       transition: 'border-color 0.2s',
-      ...style,
     }}>
       {videoTrack
         ? <VideoTile track={videoTrack} muted={isLocal} />
@@ -198,9 +292,9 @@ function VideoTileCard({ name, videoTrack, isMuted, isSpeaking, isLocal, style =
         )
       }
       <div style={{
-        position: 'absolute', bottom: '6px', left: '6px',
+        position: 'absolute', bottom: '7px', left: '7px',
         background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)',
-        borderRadius: '6px', padding: '2px 7px',
+        borderRadius: '6px', padding: '2px 8px',
         fontSize: '11px', fontWeight: '600', color: 'rgba(255,255,255,0.85)',
         display: 'flex', alignItems: 'center', gap: '4px',
         border: '1px solid rgba(255,255,255,0.08)',
@@ -212,39 +306,33 @@ function VideoTileCard({ name, videoTrack, isMuted, isSpeaking, isLocal, style =
   );
 }
 
-// ── Control Button ────────────────────────────────────────────────────────────
+// ── Control button ────────────────────────────────────────────────────────────
 function CtrlBtn({ title, danger, active, muted, onClick, children, size = 42 }) {
   const [hover, setHover] = useState(false);
   return (
     <button
-      title={title}
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      title={title} onClick={onClick}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         width: `${size}px`, height: `${size}px`, borderRadius: '50%', border: 'none',
-        cursor: 'pointer',
+        cursor: 'pointer', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
         transition: 'all 0.15s',
         background: danger
           ? (hover ? 'rgba(220,38,38,0.95)' : 'rgba(239,68,68,0.85)')
           : muted
-          ? (hover ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.18)')
+          ? (hover ? 'rgba(239,68,68,0.28)' : 'rgba(239,68,68,0.18)')
           : active
           ? (hover ? 'rgba(74,222,128,0.25)' : 'rgba(74,222,128,0.15)')
-          : (hover ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)'),
-        color: danger ? '#fff' : muted ? '#f87171' : active ? '#4ade80' : 'rgba(255,255,255,0.78)',
+          : (hover ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)'),
+        color: danger ? '#fff' : muted ? '#f87171' : active ? '#4ade80' : 'rgba(255,255,255,0.8)',
         boxShadow: danger ? '0 4px 18px rgba(239,68,68,0.4)' : 'none',
         backdropFilter: 'blur(8px)',
       }}
-    >
-      {children}
-    </button>
+    >{children}</button>
   );
 }
 
-// ── Glass surface style ───────────────────────────────────────────────────────
 const glass = {
   background: 'rgba(10, 13, 22, 0.88)',
   backdropFilter: 'blur(28px) saturate(180%)',
@@ -262,6 +350,7 @@ export default function CallRoom({
 }) {
   const [participants, setParticipants] = useState([]);
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
+  const [localAudioStream, setLocalAudioStream] = useState(null);
   const [localMuted, setLocalMuted] = useState(false);
   const [localCameraOff, setLocalCameraOff] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -274,9 +363,8 @@ export default function CallRoom({
     y: typeof window !== 'undefined' ? Math.max(0, window.innerHeight - 490) : 0,
   }));
   const roomRef = useRef(null);
-  const isDragging = useRef(false);
 
-  // ── Build participant list ────────────────────────────────────────
+  // ── Sync participants ─────────────────────────────────────────────
   const syncParticipants = useCallback((room) => {
     const parts = [];
     for (const p of room.remoteParticipants.values()) {
@@ -315,6 +403,15 @@ export default function CallRoom({
       try {
         await room.connect(livekitUrl, token);
         await room.localParticipant.setMicrophoneEnabled(true);
+
+        // Capture mic MediaStream for the waveform analyser
+        for (const pub of room.localParticipant.trackPublications.values()) {
+          if (pub.kind === Track.Kind.Audio && pub.track?.mediaStreamTrack) {
+            setLocalAudioStream(new MediaStream([pub.track.mediaStreamTrack]));
+            break;
+          }
+        }
+
         if (callType === 'video') {
           await room.localParticipant.setCameraEnabled(true);
           for (const pub of room.localParticipant.trackPublications.values()) {
@@ -363,18 +460,15 @@ export default function CallRoom({
   // ── Drag ──────────────────────────────────────────────────────────
   const startDrag = useCallback((e) => {
     if (isFullscreen) return;
-    isDragging.current = true;
     const startX = e.clientX, startY = e.clientY;
     const origX = pos.x, origY = pos.y;
     const onMove = (ev) => {
-      if (!isDragging.current) return;
       setPos({
         x: Math.max(0, Math.min(window.innerWidth - 290, origX + ev.clientX - startX)),
         y: Math.max(0, Math.min(window.innerHeight - 120, origY + ev.clientY - startY)),
       });
     };
     const onUp = () => {
-      isDragging.current = false;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -383,7 +477,7 @@ export default function CallRoom({
     e.preventDefault();
   }, [isFullscreen, pos.x, pos.y]);
 
-  // ── Helpers ───────────────────────────────────────────────────────
+  // ── Computed values ───────────────────────────────────────────────
   const inCallIds = new Set([currentUser?.id, ...participants.map(p => p.identity)]);
   const uninvited = (collaborators || []).filter(c => c.userId && !inCallIds.has(c.userId));
   const totalInCall = participants.length + 1;
@@ -392,7 +486,8 @@ export default function CallRoom({
   // ── Shared controls bar ───────────────────────────────────────────
   const ControlsBar = ({ large = false }) => (
     <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: large ? '14px' : '10px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: large ? '14px' : '10px',
       padding: large ? '18px 24px' : '10px 14px 14px',
     }}>
       <CtrlBtn title={localMuted ? 'Unmute' : 'Mute'} active={!localMuted} muted={localMuted} onClick={toggleMute} size={large ? 50 : 42}>
@@ -409,13 +504,16 @@ export default function CallRoom({
         </CtrlBtn>
       )}
       <CtrlBtn title={isHost ? 'End call for everyone' : 'Leave call'} danger onClick={handleEnd} size={large ? 56 : 42}>
-        <PhoneOffIcon />
+        <PhoneHangupIcon />
       </CtrlBtn>
     </div>
   );
 
-  // ── Fullscreen render ─────────────────────────────────────────────
+  // ── Fullscreen ────────────────────────────────────────────────────
   if (isFullscreen) {
+    const cols = totalInCall === 1 ? 1 : totalInCall <= 2 ? 2 : totalInCall <= 4 ? 2 : 3;
+    const rows = Math.ceil(totalInCall / cols);
+
     return (
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
@@ -431,11 +529,10 @@ export default function CallRoom({
           fontFamily: 'inherit',
         }}
       >
-        {/* Fullscreen header */}
+        {/* Header */}
         <div style={{
-          display: 'flex', alignItems: 'center', padding: '20px 28px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          gap: '12px',
+          display: 'flex', alignItems: 'center', padding: '18px 24px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)', gap: '12px', flexShrink: 0,
         }}>
           <div style={{
             width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
@@ -445,14 +542,13 @@ export default function CallRoom({
           }} />
           <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '700', fontSize: '15px', flex: 1 }}>
             {callType === 'video' ? 'Video' : 'Audio'} Call
-            {!isConnected && <span style={{ color: 'rgba(255,255,255,0.4)', fontWeight: '400' }}> · Connecting…</span>}
+            {!isConnected && <span style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '400' }}> · Connecting…</span>}
           </span>
-          <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px', fontWeight: '500' }}>
+          <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px' }}>
             {totalInCall} {totalInCall === 1 ? 'person' : 'people'}
           </span>
           <button
             onClick={() => setIsFullscreen(false)}
-            title="Minimize"
             style={{
               background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
               borderRadius: '8px', padding: '6px 12px', color: 'rgba(255,255,255,0.6)',
@@ -465,64 +561,60 @@ export default function CallRoom({
         </div>
 
         {error && (
-          <div style={{ padding: '10px 28px', color: '#f87171', fontSize: '13px', background: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
+          <div style={{ padding: '8px 24px', color: '#f87171', fontSize: '12px', background: 'rgba(239,68,68,0.07)', flexShrink: 0 }}>
             ⚠ {error}
           </div>
         )}
 
-        {/* Fullscreen body */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', gap: '32px', overflow: 'hidden' }}>
+        {/* Body — fills all remaining height */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: '16px', minHeight: 0 }}>
           {callType === 'video' ? (
-            // Video grid fullscreen
+            // Video: adaptive grid fills the body completely
             <div style={{
               display: 'grid',
-              gridTemplateColumns: totalInCall === 1 ? '1fr' : totalInCall <= 2 ? '1fr 1fr' : totalInCall <= 4 ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)',
-              gap: '12px',
-              width: '100%', maxWidth: '1100px', flex: 1,
+              gridTemplateColumns: `repeat(${cols}, 1fr)`,
+              gridTemplateRows: `repeat(${rows}, 1fr)`,
+              gap: '10px',
+              width: '100%',
+              height: '100%',
+              flex: 1,
+              minHeight: 0,
             }}>
               <VideoTileCard
                 name={currentUser?.name || 'You'}
                 videoTrack={localCameraOff ? null : localVideoTrack}
-                isMuted={localMuted}
-                isSpeaking={localSpeaking}
-                isLocal
-                style={{ borderRadius: '16px' }}
+                isMuted={localMuted} isSpeaking={localSpeaking} isLocal fillHeight
               />
               {participants.map(p => (
                 <React.Fragment key={p.identity}>
                   <VideoTileCard
-                    name={p.name}
-                    videoTrack={p.videoTrack}
-                    isMuted={p.isMuted}
-                    isSpeaking={activeSpeakers.has(p.identity)}
-                    isLocal={false}
-                    style={{ borderRadius: '16px' }}
+                    name={p.name} videoTrack={p.videoTrack}
+                    isMuted={p.isMuted} isSpeaking={activeSpeakers.has(p.identity)} isLocal={false} fillHeight
                   />
                   {p.audioTrack && <AudioRenderer track={p.audioTrack} />}
                 </React.Fragment>
               ))}
             </div>
           ) : (
-            // Audio fullscreen
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '40px', width: '100%', maxWidth: '600px' }}>
-              {/* Participant avatars row */}
+            // Audio: centered layout
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', flex: 1, gap: '40px', width: '100%', maxWidth: '640px', margin: '0 auto',
+            }}>
               <div style={{ display: 'flex', gap: '28px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                <AudioAvatar name={currentUser?.name || 'You'} isMuted={localMuted} isSpeaking={localSpeaking} isLocal size={80} />
+                <AudioAvatar name={currentUser?.name || 'You'} isMuted={localMuted} isSpeaking={localSpeaking} isLocal size={88} />
                 {participants.map(p => (
                   <React.Fragment key={p.identity}>
-                    <AudioAvatar name={p.name} isMuted={p.isMuted} isSpeaking={activeSpeakers.has(p.identity)} isLocal={false} size={80} />
+                    <AudioAvatar name={p.name} isMuted={p.isMuted} isSpeaking={activeSpeakers.has(p.identity)} isLocal={false} size={88} />
                     {p.audioTrack && <AudioRenderer track={p.audioTrack} />}
                   </React.Fragment>
                 ))}
               </div>
-
-              {/* Big waveform */}
-              <div style={{ width: '100%', padding: '20px 32px', background: 'rgba(255,255,255,0.03)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <AudioWaveform active={isConnected && !localMuted} barCount={36} />
+              <div style={{ width: '100%', padding: '20px 24px', background: 'rgba(255,255,255,0.03)', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <AudioWaveform audioStream={localAudioStream} active={isConnected && !localMuted} barCount={40} height={56} />
               </div>
-
               {participants.length === 0 && isConnected && (
-                <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: '14px', fontWeight: '500', textAlign: 'center' }}>
+                <div style={{ color: 'rgba(255,255,255,0.22)', fontSize: '14px', fontWeight: '500' }}>
                   Waiting for others to join…
                 </div>
               )}
@@ -530,16 +622,16 @@ export default function CallRoom({
           )}
         </div>
 
-        {/* Join requests fullscreen */}
+        {/* Join requests */}
         {isHost && pendingJoinRequests?.length > 0 && (
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', padding: '0 28px 12px', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', padding: '0 24px 12px', flexShrink: 0 }}>
             {pendingJoinRequests.map(req => (
               <JoinRequest key={req.requesterId} req={req} onAccept={() => onAcceptJoin(req)} onReject={() => onRejectJoin(req)} />
             ))}
           </div>
         )}
 
-        {/* Invite panel fullscreen */}
+        {/* Invite panel */}
         <AnimatePresence>
           {showInvite && uninvited.length > 0 && (
             <motion.div
@@ -547,26 +639,25 @@ export default function CallRoom({
               exit={{ y: 80, opacity: 0 }} transition={{ duration: 0.2 }}
               style={{
                 position: 'absolute', bottom: '90px', left: '50%', transform: 'translateX(-50%)',
-                background: 'rgba(10,13,22,0.95)', backdropFilter: 'blur(20px)',
+                background: 'rgba(10,13,22,0.96)', backdropFilter: 'blur(20px)',
                 border: '1px solid rgba(255,255,255,0.1)', borderRadius: '18px',
                 padding: '16px', minWidth: '220px', maxWidth: '300px',
               }}
             >
-              <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: '10px' }}>Invite</div>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: '10px' }}>Invite</div>
               {uninvited.map(c => <InviteRow key={c.userId} name={c.name} onInvite={() => { onInvite(c.userId); setShowInvite(false); }} />)}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Controls bar fullscreen */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
           <ControlsBar large />
         </div>
       </motion.div>
     );
   }
 
-  // ── Mini window render ────────────────────────────────────────────
+  // ── Mini floating window ──────────────────────────────────────────
   const miniW = callType === 'video' ? 310 : 284;
 
   return (
@@ -576,55 +667,39 @@ export default function CallRoom({
       exit={{ opacity: 0, y: 20, scale: 0.95 }}
       transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
       style={{
-        position: 'fixed',
-        left: `${pos.x}px`,
-        top: `${pos.y}px`,
-        width: `${miniW}px`,
-        zIndex: 9999,
-        borderRadius: '20px',
-        overflow: 'hidden',
-        fontFamily: 'inherit',
-        userSelect: 'none',
-        ...glass,
+        position: 'fixed', left: `${pos.x}px`, top: `${pos.y}px`,
+        width: `${miniW}px`, zIndex: 9999,
+        borderRadius: '20px', overflow: 'hidden',
+        fontFamily: 'inherit', userSelect: 'none', ...glass,
       }}
     >
-      {/* ── Header / Drag handle ── */}
+      {/* Header / drag handle */}
       <div
         onMouseDown={startDrag}
         style={{
           padding: '12px 14px 10px',
           display: 'flex', alignItems: 'center', gap: '8px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          cursor: 'grab',
+          borderBottom: '1px solid rgba(255,255,255,0.06)', cursor: 'grab',
         }}
       >
-        <span style={{ color: 'rgba(255,255,255,0.2)', display: 'flex', flexShrink: 0, cursor: 'grab' }}><GripIcon /></span>
-
+        <span style={{ color: 'rgba(255,255,255,0.2)', display: 'flex', flexShrink: 0 }}><GripIcon /></span>
         <span style={{
           width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
           background: isConnected ? '#4ade80' : '#f59e0b',
           boxShadow: isConnected ? '0 0 8px #4ade8077' : 'none',
           animation: isConnected ? 'bj-call-pulse 2s ease-in-out infinite' : 'none',
         }} />
-
-        <span style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: '13px', flex: 1, letterSpacing: '-0.1px' }}>
+        <span style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: '13px', flex: 1 }}>
           {callType === 'video' ? 'Video' : 'Audio'} Call
-          {!isConnected && <span style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '400', fontSize: '11px' }}> · Connecting</span>}
+          {!isConnected && <span style={{ color: 'rgba(255,255,255,0.3)', fontWeight: '400', fontSize: '11px' }}> · Connecting</span>}
         </span>
-
-        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', fontWeight: '600', flexShrink: 0 }}>
-          {totalInCall}p
-        </span>
-
-        {/* Maximize */}
+        <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px', fontWeight: '600', flexShrink: 0 }}>{totalInCall}p</span>
         <button
-          title="Fullscreen"
-          onClick={() => setIsFullscreen(true)}
+          title="Fullscreen" onClick={() => setIsFullscreen(true)}
           style={{
             background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: '6px', padding: '4px', cursor: 'pointer',
-            color: 'rgba(255,255,255,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
+            color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
           <MaximizeIcon />
@@ -632,15 +707,14 @@ export default function CallRoom({
       </div>
 
       {error && (
-        <div style={{ padding: '8px 14px', color: '#f87171', fontSize: '12px', background: 'rgba(239,68,68,0.07)', borderBottom: '1px solid rgba(239,68,68,0.12)' }}>
+        <div style={{ padding: '8px 14px', color: '#f87171', fontSize: '12px', background: 'rgba(239,68,68,0.07)' }}>
           ⚠ {error}
         </div>
       )}
 
-      {/* ── Content ── */}
+      {/* Content */}
       <div style={{ padding: '12px 12px 0' }}>
         {callType === 'video' ? (
-          // Video grid mini
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '260px', overflowY: 'auto' }}>
             <VideoTileCard name={currentUser?.name || 'You'} videoTrack={localCameraOff ? null : localVideoTrack} isMuted={localMuted} isSpeaking={localSpeaking} isLocal />
             {participants.map(p => (
@@ -656,10 +730,8 @@ export default function CallRoom({
             )}
           </div>
         ) : (
-          // Audio mini
           <>
-            {/* Avatar row */}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap', paddingBottom: '12px' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap', paddingBottom: '10px' }}>
               <AudioAvatar name={currentUser?.name || 'You'} isMuted={localMuted} isSpeaking={localSpeaking} isLocal size={48} />
               {participants.map(p => (
                 <React.Fragment key={p.identity}>
@@ -668,22 +740,19 @@ export default function CallRoom({
                 </React.Fragment>
               ))}
             </div>
-
-            {/* Waveform */}
-            <div style={{ padding: '8px 4px 12px' }}>
-              <AudioWaveform active={isConnected && !localMuted} barCount={22} />
+            <div style={{ padding: '6px 4px 10px' }}>
+              <AudioWaveform audioStream={localAudioStream} active={isConnected && !localMuted} barCount={22} height={44} />
             </div>
-
             {participants.length === 0 && isConnected && (
-              <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.22)', fontSize: '11px', fontWeight: '600', paddingBottom: '8px' }}>
-                Waiting for others to join…
+              <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.2)', fontSize: '11px', fontWeight: '600', paddingBottom: '8px' }}>
+                Waiting for others…
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* ── Pending join requests (host) ── */}
+      {/* Join requests (host) */}
       {isHost && pendingJoinRequests?.length > 0 && (
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
           <div style={{ fontSize: '10px', fontWeight: '700', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '2px' }}>Requests</div>
@@ -693,7 +762,7 @@ export default function CallRoom({
         </div>
       )}
 
-      {/* ── Invite panel ── */}
+      {/* Invite panel */}
       <AnimatePresence>
         {showInvite && (
           <motion.div
@@ -702,9 +771,9 @@ export default function CallRoom({
             style={{ overflow: 'hidden', borderTop: '1px solid rgba(255,255,255,0.06)' }}
           >
             <div style={{ padding: '8px 12px' }}>
-              <div style={{ fontSize: '10px', fontWeight: '700', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px' }}>Invite to call</div>
+              <div style={{ fontSize: '10px', fontWeight: '700', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px' }}>Invite</div>
               {uninvited.length === 0
-                ? <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px', padding: '2px 0', fontWeight: '500' }}>Everyone is already in.</div>
+                ? <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px', fontWeight: '500', padding: '2px 0' }}>Everyone is already in.</div>
                 : uninvited.map(c => <InviteRow key={c.userId} name={c.name} onInvite={() => { onInvite(c.userId); setShowInvite(false); }} />)
               }
             </div>
@@ -712,7 +781,6 @@ export default function CallRoom({
         )}
       </AnimatePresence>
 
-      {/* ── Controls bar ── */}
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <ControlsBar />
       </div>
@@ -720,14 +788,12 @@ export default function CallRoom({
   );
 }
 
-// ── Join request row ──────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 function JoinRequest({ req, onAccept, onReject }) {
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: '8px',
-      padding: '7px 8px', borderRadius: '10px',
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(255,255,255,0.06)',
+      display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 8px',
+      borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
     }}>
       <div style={{
         width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
@@ -738,38 +804,24 @@ function JoinRequest({ req, onAccept, onReject }) {
       <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: '12px', flex: 1, fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {req.requesterName}
       </span>
-      <button
-        onClick={onAccept} title="Accept"
-        style={{
-          background: 'rgba(74,222,128,0.85)', color: '#000', border: 'none',
-          borderRadius: '7px', padding: '4px 10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: '3px',
-        }}
-      >
+      <button onClick={onAccept} title="Accept"
+        style={{ background: 'rgba(74,222,128,0.85)', color: '#000', border: 'none', borderRadius: '7px', padding: '4px 10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
         <CheckIcon />
       </button>
-      <button
-        onClick={onReject} title="Decline"
-        style={{
-          background: 'rgba(255,255,255,0.06)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)',
-          borderRadius: '7px', padding: '4px 10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: '3px',
-        }}
-      >
+      <button onClick={onReject} title="Decline"
+        style={{ background: 'rgba(255,255,255,0.06)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '7px', padding: '4px 10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
         <XIcon />
       </button>
     </div>
   );
 }
 
-// ── Invite row ────────────────────────────────────────────────────────────────
 function InviteRow({ name, onInvite }) {
   const [hover, setHover] = useState(false);
   return (
     <button
       onClick={onInvite}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
         padding: '7px 6px', background: hover ? 'rgba(255,255,255,0.06)' : 'transparent',
@@ -779,10 +831,10 @@ function InviteRow({ name, onInvite }) {
       }}
     >
       <div style={{
-        width: '28px', height: '28px', borderRadius: '50%',
+        width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
         background: 'rgba(74,222,128,0.1)', border: '1.5px solid rgba(74,222,128,0.15)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: '#4ade80', fontWeight: '700', fontSize: '11px', flexShrink: 0,
+        color: '#4ade80', fontWeight: '700', fontSize: '11px',
       }}>{initials(name)}</div>
       {name}
     </button>

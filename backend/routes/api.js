@@ -504,7 +504,7 @@ router.get('/', apiLimiter, async (req, res) => {
     const socketRoom = `${entityType}:${callId}`;
 
     if (!activeCalls.has(callId)) {
-      activeCalls.set(callId, { hostUserId: userId, hostName: userName, callType, roomName, startedAt: Date.now() });
+      activeCalls.set(callId, { hostUserId: userId, hostName: userName, callType, roomName, entityType, startedAt: Date.now() });
       req.app.get('io')?.to(socketRoom).emit('call:started', { callId, entityType, hostUserId: userId, hostName: userName, callType });
       logger.info({ callId, entityType, userId, callType }, '[call] started');
     }

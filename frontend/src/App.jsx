@@ -91,15 +91,13 @@ export default function App() {
   
   // ── Call feature state ────────────────────────────────────────────
   const [livekitEnabled, setLivekitEnabled] = useState(false);
-  // myActiveCall: the call I am currently in { projectId, token, roomName, livekitUrl, callType, isHost }
   const [myActiveCall, setMyActiveCall] = useState(null);
-  // activeCalls: calls others have started in projects I'm in { projectId → { hostUserId, hostName, callType } }
+  // activeCalls: calls in progress (started by others) { callId → { hostUserId, hostName, callType, entityType } }
   const [activeCalls, setActiveCalls] = useState(new Map());
-  // pendingJoinRequests: join requests I (as host) need to respond to
+  // invitedCalls: callIds where the host personally invited me (skip request-to-join flow)
+  const [invitedCalls, setInvitedCalls] = useState(new Set());
   const [pendingJoinRequests, setPendingJoinRequests] = useState([]);
-  // dismissedCalls: projects whose call banners the user dismissed
   const [dismissedCalls, setDismissedCalls] = useState(new Set());
-  // callRequestSent: projectId → true, to show "Request sent…" state
   const [callRequestSent, setCallRequestSent] = useState(new Set());
 
   const [notifications, setNotifications] = useState([]);
@@ -186,6 +184,7 @@ export default function App() {
 
     socket.on('call:ended', ({ callId }) => {
       setActiveCalls(prev => { const m = new Map(prev); m.delete(callId); return m; });
+      setInvitedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
       setDismissedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
       setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
       setMyActiveCall(prev => (prev?.callId === callId ? null : prev));
@@ -208,10 +207,11 @@ export default function App() {
       toast('Your request to join was declined.');
     });
 
-    socket.on('call:invited', ({ callId, hostName, callType }) => {
-      setActiveCalls(prev => new Map(prev).set(callId, { hostUserId: null, hostName, callType }));
+    socket.on('call:invited', ({ callId, hostName, callType, entityType }) => {
+      // Host personally invited me — track separately so banner shows "Join Now" not "Request to Join"
+      setInvitedCalls(prev => new Set([...prev, callId]));
+      setActiveCalls(prev => new Map(prev).set(callId, { hostUserId: null, hostName, callType, entityType: entityType || 'project' }));
       setDismissedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
-      setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
     });
 
     return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
@@ -359,12 +359,15 @@ export default function App() {
   };
 
   // ── Call helpers ──────────────────────────────────────────────────
-  const startCall = useCallback(async (callId, callType, entityType = 'project') => {
+  const startCall = useCallback(async (callId, callType, entityType = 'project', asHost = true) => {
     try {
       const param = entityType === 'space' ? `&spaceId=${callId}` : `&projectId=${callId}`;
       const r = await api('get_call_token', null, 'GET', `${param}&callType=${callType}`);
       if (r.error) { toast(r.error); return; }
-      setMyActiveCall({ callId, token: r.token, roomName: r.roomName, livekitUrl: r.livekitUrl, callType, isHost: true });
+      setMyActiveCall({ callId, token: r.token, roomName: r.roomName, livekitUrl: r.livekitUrl, callType, isHost: asHost });
+      // Clear invite tracking once joined
+      setInvitedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
+      setActiveCalls(prev => { const m = new Map(prev); m.delete(callId); return m; });
     } catch (err) {
       toast('Failed to start call');
     }
@@ -535,8 +538,9 @@ export default function App() {
             unreadNotifications={unreadCount}
             livekitEnabled={livekitEnabled}
             onStartCall={(callType) => startCall(currentSpaceId, callType, 'space')}
-            incomingCall={!dismissedCalls.has(currentSpaceId) && activeCalls.has(currentSpaceId) && activeCalls.get(currentSpaceId)?.hostUserId !== currentUser?.id ? activeCalls.get(currentSpaceId) : null}
+            incomingCall={!dismissedCalls.has(currentSpaceId) && activeCalls.has(currentSpaceId) && activeCalls.get(currentSpaceId)?.hostUserId !== currentUser?.id ? { ...activeCalls.get(currentSpaceId), callId: currentSpaceId, isInvited: invitedCalls.has(currentSpaceId) } : null}
             onRequestJoinCall={() => requestJoinCall(currentSpaceId)}
+            onJoinInvitedCall={() => { const c = activeCalls.get(currentSpaceId); startCall(currentSpaceId, c?.callType || 'audio', 'space', false); }}
             callRequestSent={callRequestSent.has(currentSpaceId)}
             isInCall={myActiveCall?.callId === currentSpaceId}
             onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSpaceId]))}
@@ -592,8 +596,9 @@ export default function App() {
                 currentUser={currentUser}
                 livekitEnabled={livekitEnabled}
                 onStartCall={(callType) => startCall(currentProject.id, callType, 'project')}
-                incomingCall={!dismissedCalls.has(currentProject.id) && activeCalls.has(currentProject.id) && activeCalls.get(currentProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentProject.id) : null}
+                incomingCall={!dismissedCalls.has(currentProject.id) && activeCalls.has(currentProject.id) && activeCalls.get(currentProject.id).hostUserId !== currentUser?.id ? { ...activeCalls.get(currentProject.id), callId: currentProject.id, isInvited: invitedCalls.has(currentProject.id) } : null}
                 onRequestJoinCall={() => requestJoinCall(currentProject.id)}
+                onJoinInvitedCall={() => { const c = activeCalls.get(currentProject.id); startCall(currentProject.id, c?.callType || 'audio', 'project', false); }}
                 callRequestSent={callRequestSent.has(currentProject.id)}
                 isInCall={myActiveCall?.callId === currentProject.id}
                 onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentProject.id]))}
@@ -631,8 +636,9 @@ export default function App() {
                 currentUser={currentUser}
                 livekitEnabled={livekitEnabled}
                 onStartCall={(callType) => startCall(currentSharedProject.id, callType, 'project')}
-                incomingCall={!dismissedCalls.has(currentSharedProject.id) && activeCalls.has(currentSharedProject.id) && activeCalls.get(currentSharedProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentSharedProject.id) : null}
+                incomingCall={!dismissedCalls.has(currentSharedProject.id) && activeCalls.has(currentSharedProject.id) && activeCalls.get(currentSharedProject.id).hostUserId !== currentUser?.id ? { ...activeCalls.get(currentSharedProject.id), callId: currentSharedProject.id, isInvited: invitedCalls.has(currentSharedProject.id) } : null}
                 onRequestJoinCall={() => requestJoinCall(currentSharedProject.id)}
+                onJoinInvitedCall={() => { const c = activeCalls.get(currentSharedProject.id); startCall(currentSharedProject.id, c?.callType || 'audio', 'project', false); }}
                 callRequestSent={callRequestSent.has(currentSharedProject.id)}
                 isInCall={myActiveCall?.callId === currentSharedProject.id}
                 onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSharedProject.id]))}

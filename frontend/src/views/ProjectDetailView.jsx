@@ -14,7 +14,7 @@ import DOMPurify from 'dompurify';
 
 
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, callRequestSent = false, isInCall = false, onDismissCallBanner }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, onJoinInvitedCall, callRequestSent = false, isInCall = false, onDismissCallBanner }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
@@ -421,6 +421,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             callInfo={incomingCall}
             requestSent={callRequestSent}
             onRequestJoin={onRequestJoinCall}
+            onJoinNow={onJoinInvitedCall}
             onDismiss={onDismissCallBanner}
           />
         )}

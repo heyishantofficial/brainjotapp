@@ -206,7 +206,7 @@ io.on('connection', (socket) => {
       const hostId = socket.request.session?.userId;
       const call = activeCalls.get(callId);
       if (!call || call.hostUserId !== hostId) return;
-      io.to(`user:${inviteeId}`).emit('call:invited', { callId, hostName: call.hostName, callType: call.callType });
+      io.to(`user:${inviteeId}`).emit('call:invited', { callId, hostName: call.hostName, callType: call.callType, entityType: call.entityType || 'project' });
     });
 
     // Host ends the call for everyone

@@ -34,6 +34,7 @@ export default function SpaceView({
   onStartCall,
   incomingCall,
   onRequestJoinCall,
+  onJoinInvitedCall,
   callRequestSent = false,
   isInCall = false,
   onDismissCallBanner,
@@ -114,6 +115,7 @@ export default function SpaceView({
               callInfo={incomingCall}
               requestSent={callRequestSent}
               onRequestJoin={onRequestJoinCall}
+              onJoinNow={onJoinInvitedCall}
               onDismiss={onDismissCallBanner}
             />
           )}
