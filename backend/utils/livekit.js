@@ -16,7 +16,7 @@ async function generateToken(userId, userName, roomName) {
     ttl: '2h',
   });
   at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
-  return at.toJwt();
+  return await at.toJwt();
 }
 
 module.exports = { livekitEnabled, activeCalls, generateToken, LIVEKIT_URL };

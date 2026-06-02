@@ -498,7 +498,7 @@ router.get('/', apiLimiter, async (req, res) => {
       if (!space) { res.status(404).json({ error: 'Space not found or access denied' }); return; }
     }
 
-    const user = await User.findById(userId).select('name');
+    const user = await User.findOne({ id: userId }).select('name');
     const userName = user?.name || 'Host';
     const roomName = `call_${entityType}_${callId}`;
     const socketRoom = `${entityType}:${callId}`;
