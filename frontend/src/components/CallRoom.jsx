@@ -120,7 +120,7 @@ function CtrlBtn({ title, active, danger, onClick, children }) {
 
 export default function CallRoom({
   token, roomName, livekitUrl, callType, isHost,
-  projectId, collaborators, pendingJoinRequests,
+  callId, collaborators, pendingJoinRequests,
   onAcceptJoin, onRejectJoin, onInvite, onEnd,
   socket, currentUser,
 }) {
@@ -216,10 +216,10 @@ export default function CallRoom({
   }, [localCameraOff, callType]);
 
   const handleEnd = useCallback(() => {
-    if (isHost) socket?.emit('call:end', { projectId });
+    if (isHost) socket?.emit('call:end', { callId });
     roomRef.current?.disconnect();
     onEnd();
-  }, [isHost, socket, projectId, onEnd]);
+  }, [isHost, socket, callId, onEnd]);
 
   // Collaborators not yet in the call (for invite list)
   const inCallIds = new Set([currentUser?.id, ...participants.map(p => p.identity)]);

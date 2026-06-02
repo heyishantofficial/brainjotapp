@@ -1,8 +1,11 @@
 import React from 'react';
 import { Bell, Search, MessageSquarePlus } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
+import CallButton from '../components/CallButton';
+import CallBanner from '../components/CallBanner';
 
 const projectProgress = (p) => {
   if (!p.tasks || p.tasks.length === 0) return 0;
@@ -27,6 +30,13 @@ export default function SpaceView({
   onOpenNotifications,
   onOpenFeedback,
   unreadNotifications = 0,
+  livekitEnabled = false,
+  onStartCall,
+  incomingCall,
+  onRequestJoinCall,
+  callRequestSent = false,
+  isInCall = false,
+  onDismissCallBanner,
 }) {
   const activeProjects = projects.filter(p => !p.archived);
   const totalTasks = activeProjects.reduce((s, p) => s + (p.tasks || []).length, 0);
@@ -96,6 +106,19 @@ export default function SpaceView({
 
       {/* Space Header Banner */}
       <div style={{ padding: '0 36px', marginBottom: '32px' }}>
+
+        {/* Call banner */}
+        <AnimatePresence>
+          {livekitEnabled && incomingCall && !isInCall && (
+            <CallBanner
+              callInfo={incomingCall}
+              requestSent={callRequestSent}
+              onRequestJoin={onRequestJoinCall}
+              onDismiss={onDismissCallBanner}
+            />
+          )}
+        </AnimatePresence>
+
       <div
         className="detail-header"
         style={{
@@ -122,6 +145,15 @@ export default function SpaceView({
 
           <div className="detail-actions">
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {livekitEnabled && (
+                <CallButton
+                  project={space}
+                  onStartCall={onStartCall}
+                  hasActiveCall={!!incomingCall}
+                  isInCall={isInCall}
+                  contrastColor={contrast}
+                />
+              )}
               <div
                 className="collab-pill has-tooltip"
                 style={{ background: `${contrast}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}

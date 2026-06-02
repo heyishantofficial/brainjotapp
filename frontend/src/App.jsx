@@ -177,63 +177,62 @@ export default function App() {
     });
 
     // ── Call signal events ────────────────────────────────────────
-    socket.on('call:started', ({ projectId, hostUserId, hostName, callType }) => {
-      // Only show banner if it's someone else's call (not my own)
+    socket.on('call:started', ({ callId, hostUserId, hostName, callType }) => {
       if (hostUserId === currentUser?.id) return;
-      setActiveCalls(prev => new Map(prev).set(projectId, { hostUserId, hostName, callType }));
-      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
-      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      setActiveCalls(prev => new Map(prev).set(callId, { hostUserId, hostName, callType }));
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
     });
 
-    socket.on('call:ended', ({ projectId }) => {
-      setActiveCalls(prev => { const m = new Map(prev); m.delete(projectId); return m; });
-      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
-      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
-      // If I'm in this call, disconnect
-      setMyActiveCall(prev => (prev?.projectId === projectId ? null : prev));
+    socket.on('call:ended', ({ callId }) => {
+      setActiveCalls(prev => { const m = new Map(prev); m.delete(callId); return m; });
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
+      setMyActiveCall(prev => (prev?.callId === callId ? null : prev));
     });
 
-    // Host receives join requests
-    socket.on('call:join_requested', ({ projectId, requesterId, requesterName }) => {
+    socket.on('call:join_requested', ({ callId, requesterId, requesterName }) => {
       setPendingJoinRequests(prev => {
-        if (prev.some(r => r.requesterId === requesterId && r.projectId === projectId)) return prev;
-        return [...prev, { projectId, requesterId, requesterName }];
+        if (prev.some(r => r.requesterId === requesterId && r.callId === callId)) return prev;
+        return [...prev, { callId, requesterId, requesterName }];
       });
     });
 
-    // I was accepted into a call
-    socket.on('call:join_accepted', ({ projectId, token, roomName, livekitUrl, callType }) => {
-      setActiveCalls(prev => { const m = new Map(prev); m.delete(projectId); return m; });
-      setMyActiveCall({ projectId, token, roomName, livekitUrl, callType, isHost: false });
+    socket.on('call:join_accepted', ({ callId, token, roomName, livekitUrl, callType }) => {
+      setActiveCalls(prev => { const m = new Map(prev); m.delete(callId); return m; });
+      setMyActiveCall({ callId, token, roomName, livekitUrl, callType, isHost: false });
     });
 
-    // I was rejected
-    socket.on('call:join_rejected', ({ projectId }) => {
-      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+    socket.on('call:join_rejected', ({ callId }) => {
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
       toast('Your request to join was declined.');
     });
 
-    // I was directly invited
-    socket.on('call:invited', ({ projectId, hostName, callType }) => {
-      setActiveCalls(prev => new Map(prev).set(projectId, { hostUserId: null, hostName, callType }));
-      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
-      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+    socket.on('call:invited', ({ callId, hostName, callType }) => {
+      setActiveCalls(prev => new Map(prev).set(callId, { hostUserId: null, hostName, callType }));
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(callId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(callId); return s; });
     });
 
     return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
   }, [loggedIn, loadData]);
 
-  // Join/leave project room when active project changes
+  // Join/leave the appropriate socket room when active view changes
   const activeProjectId = currentProjectId || currentSharedProjectId;
+  const activeSpaceId = currentSpaceId || currentSharedSpaceId;
   useEffect(() => {
-    const newRoom = activeProjectId ? `project:${activeProjectId}` : null;
+    const newRoom = activeProjectId
+      ? `project:${activeProjectId}`
+      : activeSpaceId
+        ? `space:${activeSpaceId}`
+        : null;
     const prevRoom = currentRoomRef.current;
     if (prevRoom !== newRoom) {
       if (prevRoom) socketRef.current?.emit('leave_room', prevRoom);
       if (newRoom) socketRef.current?.emit('join_room', newRoom);
       currentRoomRef.current = newRoom;
     }
-  }, [activeProjectId]);
+  }, [activeProjectId, activeSpaceId]);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -360,34 +359,35 @@ export default function App() {
   };
 
   // ── Call helpers ──────────────────────────────────────────────────
-  const startCall = useCallback(async (projectId, callType) => {
+  const startCall = useCallback(async (callId, callType, entityType = 'project') => {
     try {
-      const r = await api('get_call_token', null, 'GET', `&projectId=${projectId}&callType=${callType}`);
+      const param = entityType === 'space' ? `&spaceId=${callId}` : `&projectId=${callId}`;
+      const r = await api('get_call_token', null, 'GET', `${param}&callType=${callType}`);
       if (r.error) { toast(r.error); return; }
-      setMyActiveCall({ projectId, token: r.token, roomName: r.roomName, livekitUrl: r.livekitUrl, callType, isHost: true });
+      setMyActiveCall({ callId, token: r.token, roomName: r.roomName, livekitUrl: r.livekitUrl, callType, isHost: true });
     } catch (err) {
       toast('Failed to start call');
     }
   }, []); // eslint-disable-line
 
-  const requestJoinCall = useCallback((projectId) => {
+  const requestJoinCall = useCallback((callId) => {
     if (!socketRef.current) return;
-    socketRef.current.emit('call:join_request', { projectId, requesterName: currentUser?.name || 'Someone' });
-    setCallRequestSent(prev => new Set([...prev, projectId]));
+    socketRef.current.emit('call:join_request', { callId, requesterName: currentUser?.name || 'Someone' });
+    setCallRequestSent(prev => new Set([...prev, callId]));
   }, [currentUser]);
 
   const acceptJoin = useCallback((req) => {
-    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.projectId === req.projectId)));
-    socketRef.current?.emit('call:accept_join', { projectId: req.projectId, requesterId: req.requesterId, requesterName: req.requesterName });
+    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.callId === req.callId)));
+    socketRef.current?.emit('call:accept_join', { callId: req.callId, requesterId: req.requesterId, requesterName: req.requesterName });
   }, []);
 
   const rejectJoin = useCallback((req) => {
-    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.projectId === req.projectId)));
-    socketRef.current?.emit('call:reject_join', { projectId: req.projectId, requesterId: req.requesterId });
+    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.callId === req.callId)));
+    socketRef.current?.emit('call:reject_join', { callId: req.callId, requesterId: req.requesterId });
   }, []);
 
-  const inviteToCall = useCallback((projectId, inviteeId) => {
-    socketRef.current?.emit('call:invite', { projectId, inviteeId });
+  const inviteToCall = useCallback((callId, inviteeId) => {
+    socketRef.current?.emit('call:invite', { callId, inviteeId });
   }, []);
 
   const endCall = useCallback(() => {
@@ -533,6 +533,13 @@ export default function App() {
             onOpenNotifications={() => setShowNotifications(true)}
             onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
+            livekitEnabled={livekitEnabled}
+            onStartCall={(callType) => startCall(currentSpaceId, callType, 'space')}
+            incomingCall={!dismissedCalls.has(currentSpaceId) && activeCalls.has(currentSpaceId) && activeCalls.get(currentSpaceId)?.hostUserId !== currentUser?.id ? activeCalls.get(currentSpaceId) : null}
+            onRequestJoinCall={() => requestJoinCall(currentSpaceId)}
+            callRequestSent={callRequestSent.has(currentSpaceId)}
+            isInCall={myActiveCall?.callId === currentSpaceId}
+            onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSpaceId]))}
           />
         )}
         {!showProfile && activeView === 'shared-space' && currentSharedSpace && (
@@ -584,11 +591,11 @@ export default function App() {
                 unreadNotifications={unreadCount}
                 currentUser={currentUser}
                 livekitEnabled={livekitEnabled}
-                onStartCall={(callType) => startCall(currentProject.id, callType)}
+                onStartCall={(callType) => startCall(currentProject.id, callType, 'project')}
                 incomingCall={!dismissedCalls.has(currentProject.id) && activeCalls.has(currentProject.id) && activeCalls.get(currentProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentProject.id) : null}
                 onRequestJoinCall={() => requestJoinCall(currentProject.id)}
                 callRequestSent={callRequestSent.has(currentProject.id)}
-                isInCall={myActiveCall?.projectId === currentProject.id}
+                isInCall={myActiveCall?.callId === currentProject.id}
                 onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentProject.id]))}
               />
             </motion.div>
@@ -623,11 +630,11 @@ export default function App() {
                 unreadNotifications={unreadCount}
                 currentUser={currentUser}
                 livekitEnabled={livekitEnabled}
-                onStartCall={(callType) => startCall(currentSharedProject.id, callType)}
+                onStartCall={(callType) => startCall(currentSharedProject.id, callType, 'project')}
                 incomingCall={!dismissedCalls.has(currentSharedProject.id) && activeCalls.has(currentSharedProject.id) && activeCalls.get(currentSharedProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentSharedProject.id) : null}
                 onRequestJoinCall={() => requestJoinCall(currentSharedProject.id)}
                 callRequestSent={callRequestSent.has(currentSharedProject.id)}
-                isInCall={myActiveCall?.projectId === currentSharedProject.id}
+                isInCall={myActiveCall?.callId === currentSharedProject.id}
                 onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSharedProject.id]))}
               />
             </motion.div>
@@ -654,15 +661,15 @@ export default function App() {
             livekitUrl={myActiveCall.livekitUrl}
             callType={myActiveCall.callType}
             isHost={myActiveCall.isHost}
-            projectId={myActiveCall.projectId}
+            callId={myActiveCall.callId}
             collaborators={
-              [...(appData.projects || []), ...sharedProjects]
-                .find(p => p.id === myActiveCall.projectId)?.collaborators || []
+              [...(appData.projects || []), ...sharedProjects].find(p => p.id === myActiveCall.callId)?.collaborators ||
+              [...(appData.spaces || []), ...sharedSpaces].find(s => s.id === myActiveCall.callId)?.collaborators || []
             }
-            pendingJoinRequests={pendingJoinRequests.filter(r => r.projectId === myActiveCall.projectId)}
+            pendingJoinRequests={pendingJoinRequests.filter(r => r.callId === myActiveCall.callId)}
             onAcceptJoin={acceptJoin}
             onRejectJoin={rejectJoin}
-            onInvite={(inviteeId) => inviteToCall(myActiveCall.projectId, inviteeId)}
+            onInvite={(inviteeId) => inviteToCall(myActiveCall.callId, inviteeId)}
             onEnd={endCall}
             socket={socketRef.current}
             currentUser={currentUser}

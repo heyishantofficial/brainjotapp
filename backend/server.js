@@ -170,25 +170,23 @@ io.on('connection', (socket) => {
   // ── Call signalling (only wired when LiveKit env vars are present) ──
   if (livekitEnabled) {
     // Collaborator requests to join the host's call
-    socket.on('call:join_request', ({ projectId, requesterName }) => {
+    socket.on('call:join_request', ({ callId, requesterName }) => {
       const requesterId = socket.request.session?.userId;
       if (!requesterId) return;
-      const call = activeCalls.get(projectId);
+      const call = activeCalls.get(callId);
       if (!call) return;
-      io.to(`user:${call.hostUserId}`).emit('call:join_requested', {
-        projectId, requesterId, requesterName,
-      });
+      io.to(`user:${call.hostUserId}`).emit('call:join_requested', { callId, requesterId, requesterName });
     });
 
     // Host accepts a join request — generate token for the requester
-    socket.on('call:accept_join', async ({ projectId, requesterId, requesterName }) => {
+    socket.on('call:accept_join', async ({ callId, requesterId, requesterName }) => {
       const hostId = socket.request.session?.userId;
-      const call = activeCalls.get(projectId);
+      const call = activeCalls.get(callId);
       if (!call || call.hostUserId !== hostId) return;
       try {
         const token = await generateToken(requesterId, requesterName || 'Guest', call.roomName);
         io.to(`user:${requesterId}`).emit('call:join_accepted', {
-          projectId, token, roomName: call.roomName, livekitUrl: LIVEKIT_URL, callType: call.callType,
+          callId, token, roomName: call.roomName, livekitUrl: LIVEKIT_URL, callType: call.callType,
         });
       } catch (err) {
         logger.error({ err }, '[call] accept_join token error');
@@ -196,31 +194,30 @@ io.on('connection', (socket) => {
     });
 
     // Host rejects a join request
-    socket.on('call:reject_join', ({ projectId, requesterId }) => {
+    socket.on('call:reject_join', ({ callId, requesterId }) => {
       const hostId = socket.request.session?.userId;
-      const call = activeCalls.get(projectId);
+      const call = activeCalls.get(callId);
       if (!call || call.hostUserId !== hostId) return;
-      io.to(`user:${requesterId}`).emit('call:join_rejected', { projectId });
+      io.to(`user:${requesterId}`).emit('call:join_rejected', { callId });
     });
 
     // Host invites a specific collaborator
-    socket.on('call:invite', ({ projectId, inviteeId }) => {
+    socket.on('call:invite', ({ callId, inviteeId }) => {
       const hostId = socket.request.session?.userId;
-      const call = activeCalls.get(projectId);
+      const call = activeCalls.get(callId);
       if (!call || call.hostUserId !== hostId) return;
-      io.to(`user:${inviteeId}`).emit('call:invited', {
-        projectId, hostName: call.hostName, callType: call.callType,
-      });
+      io.to(`user:${inviteeId}`).emit('call:invited', { callId, hostName: call.hostName, callType: call.callType });
     });
 
     // Host ends the call for everyone
-    socket.on('call:end', ({ projectId }) => {
+    socket.on('call:end', ({ callId }) => {
       const hostId = socket.request.session?.userId;
-      const call = activeCalls.get(projectId);
+      const call = activeCalls.get(callId);
       if (!call || call.hostUserId !== hostId) return;
-      activeCalls.delete(projectId);
-      io.to(`project:${projectId}`).emit('call:ended', { projectId });
-      logger.info({ projectId, hostId }, '[call] ended');
+      activeCalls.delete(callId);
+      // Broadcast to both project and space room patterns since we don't store entityType in memory
+      io.to(`project:${callId}`).to(`space:${callId}`).emit('call:ended', { callId });
+      logger.info({ callId, hostId }, '[call] ended');
     });
   }
 
@@ -232,11 +229,11 @@ io.on('connection', (socket) => {
 
     // If the host disconnects, end the call for all participants
     if (livekitEnabled && userId !== 'anonymous') {
-      for (const [projectId, call] of activeCalls.entries()) {
+      for (const [callId, call] of activeCalls.entries()) {
         if (call.hostUserId === userId) {
-          activeCalls.delete(projectId);
-          io.to(`project:${projectId}`).emit('call:ended', { projectId });
-          logger.info({ projectId, userId }, '[call] ended on host disconnect');
+          activeCalls.delete(callId);
+          io.to(`project:${callId}`).to(`space:${callId}`).emit('call:ended', { callId });
+          logger.info({ callId, userId }, '[call] ended on host disconnect');
         }
       }
     }

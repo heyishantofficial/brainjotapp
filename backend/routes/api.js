@@ -480,6 +480,40 @@ router.get('/', apiLimiter, async (req, res) => {
     return;
   }
 
+  // ── get_call_token ── (GET because it's called from frontend as GET)
+  if (action === 'get_call_token') {
+    if (!livekitEnabled) { res.status(400).json({ error: 'Calling is not configured on this server' }); return; }
+    const { projectId, spaceId, callType = 'audio' } = req.query;
+    if (!projectId && !spaceId) { res.status(400).json({ error: 'projectId or spaceId required' }); return; }
+    if (!['audio', 'video'].includes(callType)) { res.status(400).json({ error: 'Invalid callType' }); return; }
+
+    const callId = projectId || spaceId;
+    const entityType = projectId ? 'project' : 'space';
+
+    if (projectId) {
+      const project = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }] });
+      if (!project) { res.status(404).json({ error: 'Project not found or access denied' }); return; }
+    } else {
+      const space = await Space.findOne({ id: spaceId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }] });
+      if (!space) { res.status(404).json({ error: 'Space not found or access denied' }); return; }
+    }
+
+    const user = await User.findById(userId).select('name');
+    const userName = user?.name || 'Host';
+    const roomName = `call_${entityType}_${callId}`;
+    const socketRoom = `${entityType}:${callId}`;
+
+    if (!activeCalls.has(callId)) {
+      activeCalls.set(callId, { hostUserId: userId, hostName: userName, callType, roomName, startedAt: Date.now() });
+      req.app.get('io')?.to(socketRoom).emit('call:started', { callId, entityType, hostUserId: userId, hostName: userName, callType });
+      logger.info({ callId, entityType, userId, callType }, '[call] started');
+    }
+
+    const token = await generateToken(userId, userName, roomName);
+    res.json({ ok: true, token, roomName, livekitUrl: LIVEKIT_URL });
+    return;
+  }
+
   res.status(404).json({ error: 'Unknown action' });
 });
 
@@ -1543,37 +1577,6 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }));
     if (ops.length) await Space.collection.bulkWrite(ops);
     res.json({ ok: true });
-    return;
-  }
-
-  // ── get_call_token ──
-  if (action === 'get_call_token') {
-    if (!livekitEnabled) { res.status(400).json({ error: 'Calling is not configured on this server' }); return; }
-    const { projectId, callType = 'audio' } = req.query;
-    if (!projectId) { res.status(400).json({ error: 'projectId required' }); return; }
-    if (!['audio', 'video'].includes(callType)) { res.status(400).json({ error: 'Invalid callType' }); return; }
-
-    const project = await Project.findOne({
-      id: projectId,
-      $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }],
-    }).select('id ownerId collaborators');
-    if (!project) { res.status(404).json({ error: 'Project not found or access denied' }); return; }
-
-    const user = await User.findById(userId).select('name');
-    const userName = user?.name || 'Host';
-    const roomName = `call_${projectId}`;
-
-    // Record the call if this is the host starting it for the first time
-    if (!activeCalls.has(projectId)) {
-      activeCalls.set(projectId, { hostUserId: userId, hostName: userName, callType, roomName, startedAt: Date.now() });
-      req.app.get('io')?.to(`project:${projectId}`).emit('call:started', {
-        projectId, hostUserId: userId, hostName: userName, callType,
-      });
-      logger.info({ projectId, userId, callType }, '[call] started');
-    }
-
-    const token = await generateToken(userId, userName, roomName);
-    res.json({ ok: true, token, roomName, livekitUrl: LIVEKIT_URL });
     return;
   }
 
