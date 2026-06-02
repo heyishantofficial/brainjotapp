@@ -71,8 +71,8 @@ app.use((_req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'self';");
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss: https:; frame-ancestors 'self';");
   next();
 });
 
@@ -145,11 +145,17 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Socket.IO — connection lifecycle observability ────────────────
 const activeConnections = new Map();
+const { livekitEnabled, activeCalls, generateToken, LIVEKIT_URL } = require('./utils/livekit');
 
 io.on('connection', (socket) => {
   const userId = socket.request.session?.userId || 'anonymous';
   activeConnections.set(socket.id, { userId, connectedAt: Date.now() });
   logger.info({ socketId: socket.id, userId, totalConnections: activeConnections.size }, '[socket] connected');
+
+  // Each authenticated user auto-joins a personal room so we can send directed messages
+  if (userId !== 'anonymous') {
+    socket.join(`user:${userId}`);
+  }
 
   socket.on('join_room', (room) => {
     if (!socket.request.session?.userId) return;
@@ -161,11 +167,79 @@ io.on('connection', (socket) => {
 
   socket.on('leave_room', (room) => socket.leave(room));
 
+  // ── Call signalling (only wired when LiveKit env vars are present) ──
+  if (livekitEnabled) {
+    // Collaborator requests to join the host's call
+    socket.on('call:join_request', ({ projectId, requesterName }) => {
+      const requesterId = socket.request.session?.userId;
+      if (!requesterId) return;
+      const call = activeCalls.get(projectId);
+      if (!call) return;
+      io.to(`user:${call.hostUserId}`).emit('call:join_requested', {
+        projectId, requesterId, requesterName,
+      });
+    });
+
+    // Host accepts a join request — generate token for the requester
+    socket.on('call:accept_join', async ({ projectId, requesterId, requesterName }) => {
+      const hostId = socket.request.session?.userId;
+      const call = activeCalls.get(projectId);
+      if (!call || call.hostUserId !== hostId) return;
+      try {
+        const token = await generateToken(requesterId, requesterName || 'Guest', call.roomName);
+        io.to(`user:${requesterId}`).emit('call:join_accepted', {
+          projectId, token, roomName: call.roomName, livekitUrl: LIVEKIT_URL, callType: call.callType,
+        });
+      } catch (err) {
+        logger.error({ err }, '[call] accept_join token error');
+      }
+    });
+
+    // Host rejects a join request
+    socket.on('call:reject_join', ({ projectId, requesterId }) => {
+      const hostId = socket.request.session?.userId;
+      const call = activeCalls.get(projectId);
+      if (!call || call.hostUserId !== hostId) return;
+      io.to(`user:${requesterId}`).emit('call:join_rejected', { projectId });
+    });
+
+    // Host invites a specific collaborator
+    socket.on('call:invite', ({ projectId, inviteeId }) => {
+      const hostId = socket.request.session?.userId;
+      const call = activeCalls.get(projectId);
+      if (!call || call.hostUserId !== hostId) return;
+      io.to(`user:${inviteeId}`).emit('call:invited', {
+        projectId, hostName: call.hostName, callType: call.callType,
+      });
+    });
+
+    // Host ends the call for everyone
+    socket.on('call:end', ({ projectId }) => {
+      const hostId = socket.request.session?.userId;
+      const call = activeCalls.get(projectId);
+      if (!call || call.hostUserId !== hostId) return;
+      activeCalls.delete(projectId);
+      io.to(`project:${projectId}`).emit('call:ended', { projectId });
+      logger.info({ projectId, hostId }, '[call] ended');
+    });
+  }
+
   socket.on('disconnect', (reason) => {
     const conn = activeConnections.get(socket.id);
     activeConnections.delete(socket.id);
     const durationMs = Date.now() - (conn?.connectedAt || Date.now());
     logger.info({ socketId: socket.id, userId: conn?.userId, reason, durationMs }, '[socket] disconnected');
+
+    // If the host disconnects, end the call for all participants
+    if (livekitEnabled && userId !== 'anonymous') {
+      for (const [projectId, call] of activeCalls.entries()) {
+        if (call.hostUserId === userId) {
+          activeCalls.delete(projectId);
+          io.to(`project:${projectId}`).emit('call:ended', { projectId });
+          logger.info({ projectId, userId }, '[call] ended on host disconnect');
+        }
+      }
+    }
   });
 });
 
@@ -208,16 +282,18 @@ async function boot() {
 
   // Startup configuration report
   logger.info({
-    version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
-    env:     process.env.NODE_ENV || 'development',
-    port:    PORT,
-    resend:  !!process.env.RESEND_API_KEY,
-    r2:      !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID),
-    appUrl:  process.env.APP_URL || '(default)',
+    version:  process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
+    env:      process.env.NODE_ENV || 'development',
+    port:     PORT,
+    resend:   !!process.env.RESEND_API_KEY,
+    r2:       !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID),
+    livekit:  livekitEnabled,
+    appUrl:   process.env.APP_URL || '(default)',
   }, '[startup] config');
 
-  if (!process.env.RESEND_API_KEY) logger.warn('[startup] RESEND_API_KEY not set — email invites disabled');
-  if (!process.env.R2_ACCOUNT_ID)  logger.warn('[startup] R2 credentials not set — using local disk storage');
+  if (!process.env.RESEND_API_KEY)  logger.warn('[startup] RESEND_API_KEY not set — email invites disabled');
+  if (!process.env.R2_ACCOUNT_ID)   logger.warn('[startup] R2 credentials not set — using local disk storage');
+  if (!livekitEnabled)              logger.warn('[startup] LIVEKIT_* env vars not set — call feature disabled');
 
   server.listen(PORT, () => {
     logger.info({ port: PORT }, '[startup] listening');

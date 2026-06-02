@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, Search, MessageSquarePlus } from 'lucide-react';
+import CallButton from '../components/CallButton';
+import CallBanner from '../components/CallBanner';
 import { api, apiForm, apiUpload } from '../api';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
@@ -12,7 +14,7 @@ import DOMPurify from 'dompurify';
 
 
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [] }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, callRequestSent = false, isInCall = false, onDismissCallBanner }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
@@ -412,14 +414,26 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
         </div>
       )}
 
+      {/* Call banner — slides in when someone else starts a call in this project */}
+      <AnimatePresence>
+        {livekitEnabled && incomingCall && !isInCall && (
+          <CallBanner
+            callInfo={incomingCall}
+            requestSent={callRequestSent}
+            onRequestJoin={onRequestJoinCall}
+            onDismiss={onDismissCallBanner}
+          />
+        )}
+      </AnimatePresence>
+
       <div
         className="detail-header"
-        style={{ 
+        style={{
           position: 'relative',
-          background: project.color, 
-          padding: '40px', 
-          borderRadius: '32px', 
-          color: getContrastColor(project.color), 
+          background: project.color,
+          padding: '40px',
+          borderRadius: '32px',
+          color: getContrastColor(project.color),
           marginBottom: '32px',
           overflow: 'hidden'
         }}
@@ -436,7 +450,17 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
           <div className="detail-actions">
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <div 
+              {/* Call button — only shown when LiveKit is configured */}
+              {livekitEnabled && (
+                <CallButton
+                  project={project}
+                  onStartCall={onStartCall}
+                  hasActiveCall={!!incomingCall}
+                  isInCall={isInCall}
+                  contrastColor={getContrastColor(project.color)}
+                />
+              )}
+              <div
                 className="collab-pill has-tooltip" 
                 style={{ background: `${getContrastColor(project.color)}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}
               >

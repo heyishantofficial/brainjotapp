@@ -19,6 +19,8 @@ import SpaceCollabModal from './components/SpaceCollabModal';
 import NotificationModal from './components/NotificationModal';
 import ProfileView from './views/ProfileView';
 import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
+import CallRoom from './components/CallRoom';
+import CallBanner from './components/CallBanner';
 
 // Lazy-loaded: heavy or rarely-used chunks loaded on demand
 const AdminView        = React.lazy(() => import('./views/AdminView'));
@@ -87,6 +89,19 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   
+  // ── Call feature state ────────────────────────────────────────────
+  const [livekitEnabled, setLivekitEnabled] = useState(false);
+  // myActiveCall: the call I am currently in { projectId, token, roomName, livekitUrl, callType, isHost }
+  const [myActiveCall, setMyActiveCall] = useState(null);
+  // activeCalls: calls others have started in projects I'm in { projectId → { hostUserId, hostName, callType } }
+  const [activeCalls, setActiveCalls] = useState(new Map());
+  // pendingJoinRequests: join requests I (as host) need to respond to
+  const [pendingJoinRequests, setPendingJoinRequests] = useState([]);
+  // dismissedCalls: projects whose call banners the user dismissed
+  const [dismissedCalls, setDismissedCalls] = useState(new Set());
+  // callRequestSent: projectId → true, to show "Request sent…" state
+  const [callRequestSent, setCallRequestSent] = useState(new Set());
+
   const [notifications, setNotifications] = useState([]);
   const unreadCount = notifications.filter(n => n.status === 'pending').length;
   const prevUnreadRef = useRef(null);
@@ -160,6 +175,51 @@ export default function App() {
       clearTimeout(debounce);
       debounce = setTimeout(loadData, 500);
     });
+
+    // ── Call signal events ────────────────────────────────────────
+    socket.on('call:started', ({ projectId, hostUserId, hostName, callType }) => {
+      // Only show banner if it's someone else's call (not my own)
+      if (hostUserId === currentUser?.id) return;
+      setActiveCalls(prev => new Map(prev).set(projectId, { hostUserId, hostName, callType }));
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+    });
+
+    socket.on('call:ended', ({ projectId }) => {
+      setActiveCalls(prev => { const m = new Map(prev); m.delete(projectId); return m; });
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      // If I'm in this call, disconnect
+      setMyActiveCall(prev => (prev?.projectId === projectId ? null : prev));
+    });
+
+    // Host receives join requests
+    socket.on('call:join_requested', ({ projectId, requesterId, requesterName }) => {
+      setPendingJoinRequests(prev => {
+        if (prev.some(r => r.requesterId === requesterId && r.projectId === projectId)) return prev;
+        return [...prev, { projectId, requesterId, requesterName }];
+      });
+    });
+
+    // I was accepted into a call
+    socket.on('call:join_accepted', ({ projectId, token, roomName, livekitUrl, callType }) => {
+      setActiveCalls(prev => { const m = new Map(prev); m.delete(projectId); return m; });
+      setMyActiveCall({ projectId, token, roomName, livekitUrl, callType, isHost: false });
+    });
+
+    // I was rejected
+    socket.on('call:join_rejected', ({ projectId }) => {
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      toast('Your request to join was declined.');
+    });
+
+    // I was directly invited
+    socket.on('call:invited', ({ projectId, hostName, callType }) => {
+      setActiveCalls(prev => new Map(prev).set(projectId, { hostUserId: null, hostName, callType }));
+      setDismissedCalls(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+      setCallRequestSent(prev => { const s = new Set(prev); s.delete(projectId); return s; });
+    });
+
     return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
   }, [loggedIn, loadData]);
 
@@ -181,6 +241,7 @@ export default function App() {
       if (r.loggedIn) {
         setLoggedIn(true);
         setCurrentUser(r.user);
+        setLivekitEnabled(r.features?.livekit === true);
         loadData();
         loadNotifications();
       } else {
@@ -297,6 +358,42 @@ export default function App() {
       setToastData(data);
     }
   };
+
+  // ── Call helpers ──────────────────────────────────────────────────
+  const startCall = useCallback(async (projectId, callType) => {
+    try {
+      const r = await api('get_call_token', null, 'GET', `&projectId=${projectId}&callType=${callType}`);
+      if (r.error) { toast(r.error); return; }
+      setMyActiveCall({ projectId, token: r.token, roomName: r.roomName, livekitUrl: r.livekitUrl, callType, isHost: true });
+    } catch (err) {
+      toast('Failed to start call');
+    }
+  }, []); // eslint-disable-line
+
+  const requestJoinCall = useCallback((projectId) => {
+    if (!socketRef.current) return;
+    socketRef.current.emit('call:join_request', { projectId, requesterName: currentUser?.name || 'Someone' });
+    setCallRequestSent(prev => new Set([...prev, projectId]));
+  }, [currentUser]);
+
+  const acceptJoin = useCallback((req) => {
+    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.projectId === req.projectId)));
+    socketRef.current?.emit('call:accept_join', { projectId: req.projectId, requesterId: req.requesterId, requesterName: req.requesterName });
+  }, []);
+
+  const rejectJoin = useCallback((req) => {
+    setPendingJoinRequests(prev => prev.filter(r => !(r.requesterId === req.requesterId && r.projectId === req.projectId)));
+    socketRef.current?.emit('call:reject_join', { projectId: req.projectId, requesterId: req.requesterId });
+  }, []);
+
+  const inviteToCall = useCallback((projectId, inviteeId) => {
+    socketRef.current?.emit('call:invite', { projectId, inviteeId });
+  }, []);
+
+  const endCall = useCallback(() => {
+    setMyActiveCall(null);
+    setPendingJoinRequests([]);
+  }, []);
 
   if (loading) return <Spinner />;
 
@@ -486,6 +583,13 @@ export default function App() {
                 onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
                 currentUser={currentUser}
+                livekitEnabled={livekitEnabled}
+                onStartCall={(callType) => startCall(currentProject.id, callType)}
+                incomingCall={!dismissedCalls.has(currentProject.id) && activeCalls.has(currentProject.id) && activeCalls.get(currentProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentProject.id) : null}
+                onRequestJoinCall={() => requestJoinCall(currentProject.id)}
+                callRequestSent={callRequestSent.has(currentProject.id)}
+                isInCall={myActiveCall?.projectId === currentProject.id}
+                onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentProject.id]))}
               />
             </motion.div>
           </AnimatePresence>
@@ -518,12 +622,53 @@ export default function App() {
                 onOpenFeedback={() => setShowFeedback(true)}
                 unreadNotifications={unreadCount}
                 currentUser={currentUser}
+                livekitEnabled={livekitEnabled}
+                onStartCall={(callType) => startCall(currentSharedProject.id, callType)}
+                incomingCall={!dismissedCalls.has(currentSharedProject.id) && activeCalls.has(currentSharedProject.id) && activeCalls.get(currentSharedProject.id).hostUserId !== currentUser?.id ? activeCalls.get(currentSharedProject.id) : null}
+                onRequestJoinCall={() => requestJoinCall(currentSharedProject.id)}
+                callRequestSent={callRequestSent.has(currentSharedProject.id)}
+                isInCall={myActiveCall?.projectId === currentSharedProject.id}
+                onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSharedProject.id]))}
               />
             </motion.div>
           </AnimatePresence>
         )}
         {!showProfile && (activeView === 'dashboard' || activeView === 'space' || activeView === 'shared-space') && <QuoteBar />}
       </main>
+
+      {/* Global pulse animation for call indicators */}
+      <style>{`
+        @keyframes bj-call-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+          50% { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+        }
+      `}</style>
+
+      {/* Floating call room — renders over everything regardless of active view */}
+      <AnimatePresence>
+        {myActiveCall && (
+          <CallRoom
+            key={myActiveCall.roomName}
+            token={myActiveCall.token}
+            roomName={myActiveCall.roomName}
+            livekitUrl={myActiveCall.livekitUrl}
+            callType={myActiveCall.callType}
+            isHost={myActiveCall.isHost}
+            projectId={myActiveCall.projectId}
+            collaborators={
+              [...(appData.projects || []), ...sharedProjects]
+                .find(p => p.id === myActiveCall.projectId)?.collaborators || []
+            }
+            pendingJoinRequests={pendingJoinRequests.filter(r => r.projectId === myActiveCall.projectId)}
+            onAcceptJoin={acceptJoin}
+            onRejectJoin={rejectJoin}
+            onInvite={(inviteeId) => inviteToCall(myActiveCall.projectId, inviteeId)}
+            onEnd={endCall}
+            socket={socketRef.current}
+            currentUser={currentUser}
+          />
+        )}
+      </AnimatePresence>
 
       <Toast toast={toastData} onClear={() => setToastData(null)} />
       {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}

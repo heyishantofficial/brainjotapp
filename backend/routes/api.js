@@ -13,6 +13,7 @@ const User = require('../models/User');
 const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
 const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
+const { livekitEnabled, activeCalls, generateToken, LIVEKIT_URL } = require('../utils/livekit');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -343,7 +344,7 @@ router.get('/', apiLimiter, async (req, res) => {
     if (req.session.userId) {
       const user = await User.findOne({ id: req.session.userId }).select('name email username role avatarUrl -_id');
       if (user) req.session.userRole = user.role || 'user';
-      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } : null });
+      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } : null, features: { livekit: livekitEnabled } });
     } else {
       res.json({ loggedIn: false });
     }
@@ -1542,6 +1543,37 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }));
     if (ops.length) await Space.collection.bulkWrite(ops);
     res.json({ ok: true });
+    return;
+  }
+
+  // ── get_call_token ──
+  if (action === 'get_call_token') {
+    if (!livekitEnabled) { res.status(400).json({ error: 'Calling is not configured on this server' }); return; }
+    const { projectId, callType = 'audio' } = req.query;
+    if (!projectId) { res.status(400).json({ error: 'projectId required' }); return; }
+    if (!['audio', 'video'].includes(callType)) { res.status(400).json({ error: 'Invalid callType' }); return; }
+
+    const project = await Project.findOne({
+      id: projectId,
+      $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }],
+    }).select('id ownerId collaborators');
+    if (!project) { res.status(404).json({ error: 'Project not found or access denied' }); return; }
+
+    const user = await User.findById(userId).select('name');
+    const userName = user?.name || 'Host';
+    const roomName = `call_${projectId}`;
+
+    // Record the call if this is the host starting it for the first time
+    if (!activeCalls.has(projectId)) {
+      activeCalls.set(projectId, { hostUserId: userId, hostName: userName, callType, roomName, startedAt: Date.now() });
+      req.app.get('io')?.to(`project:${projectId}`).emit('call:started', {
+        projectId, hostUserId: userId, hostName: userName, callType,
+      });
+      logger.info({ projectId, userId, callType }, '[call] started');
+    }
+
+    const token = await generateToken(userId, userName, roomName);
+    res.json({ ok: true, token, roomName, livekitUrl: LIVEKIT_URL });
     return;
   }
 
