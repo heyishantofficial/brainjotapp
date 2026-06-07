@@ -79,12 +79,23 @@ app.use((_req, res, next) => {
   next();
 });
 
+const sessionStore = MongoStore.create({
+  mongoUrl: MONGODB_URI,
+  mongoOptions: {
+    serverSelectionTimeoutMS: 5000,
+  }
+});
+
+sessionStore.on('error', (err) => {
+  logger.error({ err }, '[session-store] error');
+});
+
 const sessionMiddleware = session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   name: 'brainjot_session',
-  store: MongoStore.create({ mongoUrl: MONGODB_URI }),
+  store: sessionStore,
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
