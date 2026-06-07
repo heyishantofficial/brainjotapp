@@ -4,14 +4,14 @@ WORKDIR /app
 
 # Build frontend
 COPY frontend/package*.json ./frontend/
-RUN cd frontend && npm ci
+RUN cd frontend && npm install
 
 COPY frontend/ ./frontend/
 RUN cd frontend && npm run build
 
 # Install backend
 COPY backend/package*.json ./backend/
-RUN cd backend && npm ci
+RUN cd backend && npm install
 
 COPY backend/ ./backend/
 
