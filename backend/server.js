@@ -21,7 +21,7 @@ if (!SESSION_SECRET) {
   SESSION_SECRET = require('crypto').randomBytes(32).toString('hex');
   logger.warn('[startup] SESSION_SECRET environment variable is not set — generated a temporary secret. Sessions will invalidate on restart.');
 }
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/brainjot';
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/brainjot';
 
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
@@ -80,10 +80,7 @@ app.use((_req, res, next) => {
 });
 
 const sessionStore = MongoStore.create({
-  mongoUrl: MONGODB_URI,
-  mongoOptions: {
-    serverSelectionTimeoutMS: 5000,
-  }
+  clientPromise: mongoose.connection.asPromise().then(conn => conn.getClient()),
 });
 
 sessionStore.on('error', (err) => {
@@ -108,16 +105,13 @@ app.use(sessionMiddleware);
 io.engine.use(sessionMiddleware);
 
 // ── Health check — real DB ping, version, uptime ──────────────────
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', (_req, res) => {
   const checks = {};
-  try {
-    await mongoose.connection.db.admin().ping();
-    checks.db = 'ok';
-  } catch (err) {
-    checks.db = 'down';
-    checks.dbError = err.message;
-  }
-  const allOk = Object.values(checks).every(v => v === 'ok');
+  const readyState = mongoose.connection ? mongoose.connection.readyState : 0;
+  // readyState: 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+  checks.db = readyState === 1 ? 'ok' : (readyState === 2 ? 'connecting' : 'down');
+
+  const allOk = Object.values(checks).every(v => v === 'ok' || v === 'connecting');
   res.status(200).json({
     status: allOk ? 'ok' : 'degraded',
     version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
