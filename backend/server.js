@@ -269,10 +269,20 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 
 // ── Boot ──────────────────────────────────────────────────────────
 async function boot() {
-  await mongoose.connect(MONGODB_URI, {
+  // Listen immediately so health checks succeed even if DB is still starting up
+  server.listen(PORT, () => {
+    logger.info({ port: PORT }, '[startup] listening');
+  });
+
+  // Connect in the background
+  mongoose.connect(MONGODB_URI, {
     maxPoolSize: 10,
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
+  }).then(() => {
+    logger.info('[mongoose] connected successfully');
+  }).catch((err) => {
+    logger.error({ err }, '[mongoose] initial connection failure');
   });
 
   // Mongoose connection event listeners
@@ -294,10 +304,6 @@ async function boot() {
   if (!process.env.RESEND_API_KEY)  logger.warn('[startup] RESEND_API_KEY not set — email invites disabled');
   if (!process.env.R2_ACCOUNT_ID)   logger.warn('[startup] R2 credentials not set — using local disk storage');
   if (!livekitEnabled)              logger.warn('[startup] LIVEKIT_* env vars not set — call feature disabled');
-
-  server.listen(PORT, () => {
-    logger.info({ port: PORT }, '[startup] listening');
-  });
 }
 
 boot();
