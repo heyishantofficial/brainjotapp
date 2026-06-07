@@ -12,6 +12,9 @@ const Space = require('../models/Space');
 const User = require('../models/User');
 const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
+const Otp = require('../models/Otp');
+const Invite = require('../models/Invite');
+const { OAuth2Client } = require('google-auth-library');
 const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
 const { livekitEnabled, activeCalls, generateToken, LIVEKIT_URL } = require('../utils/livekit');
 const logger = require('../utils/logger');
@@ -341,13 +344,20 @@ router.get('/', apiLimiter, async (req, res) => {
   }
 
   if (action === 'check') {
+    const response = {
+      loggedIn: false,
+      googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+      features: { livekit: livekitEnabled }
+    };
     if (req.session.userId) {
       const user = await User.findOne({ id: req.session.userId }).select('name email username role avatarUrl -_id');
-      if (user) req.session.userRole = user.role || 'user';
-      res.json({ loggedIn: true, user: user ? { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } : null, features: { livekit: livekitEnabled } });
-    } else {
-      res.json({ loggedIn: false });
+      if (user) {
+        req.session.userRole = user.role || 'user';
+        response.loggedIn = true;
+        response.user = { id: req.session.userId, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' };
+      }
     }
+    res.json(response);
     return;
   }
 
@@ -594,6 +604,251 @@ router.post('/', apiLimiter, async (req, res, next) => {
         req.session.userRole = user.role || 'user';
         logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] login_success');
         res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── google_auth ──
+  if (action === 'google_auth') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { credential } = req.body;
+        if (!credential) {
+          return res.status(400).json({ error: 'Google credential is required' });
+        }
+        
+        if (!process.env.GOOGLE_CLIENT_ID) {
+          logger.error('[auth] GOOGLE_CLIENT_ID environment variable is not set');
+          return res.status(500).json({ error: 'Google authentication is not configured on this server.' });
+        }
+        
+        const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+        let ticket;
+        try {
+          ticket = await client.verifyIdToken({
+            idToken: credential,
+            audience: process.env.GOOGLE_CLIENT_ID,
+          });
+        } catch (tokenErr) {
+          logger.error({ err: tokenErr }, '[auth] google ID token verification failed');
+          return res.status(401).json({ error: 'Invalid Google credential token' });
+        }
+        
+        const payload = ticket.getPayload();
+        const { email, name, picture } = payload;
+        
+        if (!email) {
+          return res.status(400).json({ error: 'Email not provided by Google' });
+        }
+        
+        const cleanEmail = email.toLowerCase().trim();
+        let user = await User.findOne({ email: cleanEmail });
+        const role = ADMIN_EMAILS.includes(cleanEmail) ? 'superadmin' : 'user';
+        
+        if (!user) {
+          // Register a new user
+          const baseUsername = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 15).toLowerCase();
+          let finalUsername = baseUsername || 'user';
+          let suffix = 1;
+          while (await User.findOne({ username: finalUsername })) {
+            finalUsername = `${baseUsername}${suffix}`;
+            suffix++;
+          }
+          
+          const newUserId = 'user_' + uid();
+          user = await User.create({
+            id: newUserId,
+            email: cleanEmail,
+            name: name || 'Google User',
+            username: finalUsername,
+            passwordHash: 'GOOGLE_OAUTH_USER',
+            role,
+            avatarUrl: picture || '',
+          });
+          await seedDefaultData(newUserId);
+        } else {
+          // Check if updates are needed
+          let updated = false;
+          const updates = {};
+          if (!user.avatarUrl && picture) {
+            updates.avatarUrl = picture;
+            updated = true;
+          }
+          if (ADMIN_EMAILS.includes(user.email) && user.role !== 'superadmin') {
+            updates.role = 'superadmin';
+            updated = true;
+          }
+          if (updated) {
+            await User.updateOne({ id: user.id }, updates);
+            Object.assign(user, updates);
+          }
+        }
+        
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
+        req.session.userId = user.id;
+        req.session.userRole = user.role || 'user';
+        
+        logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] google_login_success');
+        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── send_otp ──
+  if (action === 'send_otp') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email } = req.body;
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+          return res.status(400).json({ error: 'Invalid email address' });
+        }
+        
+        if (!resend) {
+          logger.warn({ to: email }, '[email] RESEND_API_KEY not configured — skipping OTP');
+          return res.status(500).json({ error: 'Email service (Resend) is not configured on this server.' });
+        }
+        
+        const cleanEmail = email.toLowerCase().trim();
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+        
+        await Otp.findOneAndUpdate(
+          { email: cleanEmail },
+          { code: otpCode, expiresAt },
+          { upsert: true, new: true }
+        );
+        
+        await resend.emails.send({
+          from: FROM_EMAIL,
+          to: cleanEmail,
+          subject: `Your BrainJot Verification Code: ${otpCode}`,
+          html: `
+            <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0a0a0a;color:#f5f5f5;border-radius:16px">
+              <h1 style="font-size:28px;font-weight:800;margin:0 0 8px">🧠 BrainJot</h1>
+              <p style="color:#888;font-size:14px;margin:0 0 32px">Your brain at a glance</p>
+
+              <h2 style="font-size:20px;margin:0 0 16px">Verify Your Email</h2>
+              <p style="font-size:16px;line-height:1.6;margin:0 0 24px">
+                Use the following verification code to sign in to your BrainJot account. This code is valid for 5 minutes.
+              </p>
+
+              <div style="background:#1e1e1e;border:1px solid #333;padding:16px;border-radius:12px;text-align:center;font-size:32px;font-weight:800;letter-spacing:6px;color:#D4FF32;margin-bottom:24px">
+                ${otpCode}
+              </div>
+
+              <p style="font-size:13px;color:#666;margin:32px 0 0;line-height:1.6">
+                If you didn't request this code, you can safely ignore this email.
+              </p>
+            </div>
+          `,
+        });
+        
+        const userExists = await User.exists({ email: cleanEmail });
+        logger.info({ email: cleanEmail }, '[email] otp_sent');
+        res.json({ ok: true, exists: !!userExists });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── verify_otp ──
+  if (action === 'verify_otp') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email, otp } = req.body;
+        if (!email || !otp) {
+          return res.status(400).json({ error: 'Email and OTP are required' });
+        }
+        
+        const cleanEmail = email.toLowerCase().trim();
+        const otpDoc = await Otp.findOne({ email: cleanEmail, code: otp.trim() });
+        
+        if (!otpDoc || otpDoc.expiresAt < new Date()) {
+          return res.status(400).json({ error: 'Invalid or expired OTP code' });
+        }
+        
+        const user = await User.findOne({ email: cleanEmail });
+        if (!user) {
+          // Tell frontend the OTP is verified, but user needs profile signup
+          res.json({ ok: true, verified: true, exists: false });
+          return;
+        }
+        
+        await Otp.deleteOne({ _id: otpDoc._id });
+        
+        if (ADMIN_EMAILS.includes(user.email) && user.role !== 'superadmin') {
+          await User.updateOne({ id: user.id }, { role: 'superadmin' });
+          user.role = 'superadmin';
+        }
+        
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
+        req.session.userId = user.id;
+        req.session.userRole = user.role || 'user';
+        
+        logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] otp_login_success');
+        res.json({ ok: true, verified: true, exists: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ── register_otp ──
+  if (action === 'register_otp') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email, name, username, otp } = req.body;
+        if (!email || !name || !username || !otp) {
+          return res.status(400).json({ error: 'All fields are required' });
+        }
+        
+        const cleanEmail = email.toLowerCase().trim();
+        const otpDoc = await Otp.findOne({ email: cleanEmail, code: otp.trim() });
+        if (!otpDoc || otpDoc.expiresAt < new Date()) {
+          return res.status(400).json({ error: 'Invalid or expired OTP code' });
+        }
+        
+        const existing = await User.findOne({ email: cleanEmail });
+        if (existing) {
+          return res.status(400).json({ error: 'Account already exists. Please login.' });
+        }
+        
+        const cleanUsername = username.toLowerCase().trim();
+        if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-z0-9_]+$/.test(cleanUsername)) {
+          return res.status(400).json({ error: 'Username must be 3-20 chars, letters/numbers/underscores only' });
+        }
+        const takenUsername = await User.findOne({ username: cleanUsername });
+        if (takenUsername) {
+          return res.status(409).json({ error: 'Username already taken' });
+        }
+        
+        await Otp.deleteOne({ _id: otpDoc._id });
+        
+        const newUserId = 'user_' + uid();
+        const role = ADMIN_EMAILS.includes(cleanEmail) ? 'superadmin' : 'user';
+        const user = await User.create({
+          id: newUserId,
+          email: cleanEmail,
+          name: name.trim(),
+          username: cleanUsername,
+          passwordHash: 'OTP_AUTH_USER',
+          role,
+          avatarUrl: '',
+        });
+        
+        await seedDefaultData(newUserId);
+        
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
+        req.session.userId = newUserId;
+        req.session.userRole = role;
+        
+        logger.info({ userId: newUserId, ip: req.ip, role }, '[auth] register_otp_success');
+        res.json({ ok: true, user: { id: newUserId, name: user.name, email: user.email, username: user.username, role, avatarUrl: '' } });
       } catch (err) {
         next(err);
       }
@@ -1325,41 +1580,95 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
     const cleanEmail = email.toLowerCase().trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { res.status(400).json({ error: 'Invalid email address' }); return; }
+    
     let entityTitle = '';
+    let collaborators = [];
+    let ownerId = '';
+    
     if (entityType === 'project') {
-      const proj = await Project.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
+      const proj = await Project.findOne({ id: entityId, ownerId: userId }).select('title collaborators ownerId -_id');
       if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
       entityTitle = proj.title;
-      const target = await User.findOne({ email: cleanEmail }).select('id -_id');
-      if (target && proj.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
+      collaborators = proj.collaborators || [];
+      ownerId = proj.ownerId;
     } else {
-      const space = await Space.findOne({ id: entityId, ownerId: userId }).select('title collaborators -_id');
+      const space = await Space.findOne({ id: entityId, ownerId: userId }).select('title collaborators ownerId -_id');
       if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
       entityTitle = space.title;
-      const target = await User.findOne({ email: cleanEmail }).select('id -_id');
-      if (target && space.collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
+      collaborators = space.collaborators || [];
+      ownerId = space.ownerId;
     }
+    
     const target = await User.findOne({ email: cleanEmail }).select('id name username email avatarUrl -_id');
     const fromUser = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
-    if (!target) {
-      sendInviteEmail({ to: cleanEmail, toName: '', inviterName: fromUser.name, projectTitle: entityType === 'project' ? entityTitle : null, spaceTitle: entityType === 'space' ? entityTitle : null });
-      res.json({ ok: true, notFound: true, invitedName: cleanEmail });
-      return;
-    }
-    if (target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
-    const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
-    if (alreadyPending) { res.status(409).json({ error: 'Invite already pending for this user' }); return; }
-    // Prevent notification-inbox flooding: cap pending invites per target at 50
-    const pendingCount = await Notification.countDocuments({ toUserId: target.id, type: 'collab_invite', status: 'pending' });
-    if (pendingCount >= 50) { res.status(429).json({ error: 'This user has too many pending invites. Try again later.' }); return; }
-    await Notification.create({
-      id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
-      fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
-      type: 'collab_invite',
-      meta: { entityId, entityType, entityTitle, role },
-      status: 'pending',
+    
+    if (target && target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
+    if (target && collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
+    if (!target && collaborators.some(c => c.email.toLowerCase() === cleanEmail)) { res.status(409).json({ error: 'User is already invited' }); return; }
+    
+    // Generate unique Invite token
+    const token = crypto.randomBytes(16).toString('hex');
+    await Invite.create({
+      token,
+      email: cleanEmail,
+      entityId,
+      entityType,
+      role,
+      invitedBy: userId
     });
-    res.json({ ok: true, invitedName: target.name });
+    
+    const inviteUrl = `${APP_URL}?join=${token}`;
+    
+    // Send email using Resend
+    if (resend) {
+      try {
+        await resend.emails.send({
+          from: FROM_EMAIL,
+          to: cleanEmail,
+          subject: `${fromUser.name} invited you to collaborate on BrainJot`,
+          html: `
+            <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0a0a0a;color:#f5f5f5;border-radius:16px">
+              <h1 style="font-size:28px;font-weight:800;margin:0 0 8px">🧠 BrainJot</h1>
+              <p style="color:#888;font-size:14px;margin:0 0 32px">Your brain at a glance</p>
+
+              <p style="font-size:16px;line-height:1.6;margin:0 0 24px">
+                Hey,<br><br>
+                <strong>${fromUser.name}</strong> has invited you to collaborate on the ${entityType} <strong>"${entityTitle}"</strong>.
+              </p>
+
+              <a href="${inviteUrl}" style="display:inline-block;background:#7C6FCD;color:#fff;text-decoration:none;padding:14px 28px;border-radius:12px;font-weight:700;font-size:15px">
+                Accept & Join Collaboration →
+              </a>
+
+              <p style="font-size:13px;color:#666;margin:32px 0 0;line-height:1.6">
+                If you don't have a BrainJot account yet, clicking the link above will guide you to sign up. Once signed up, the collaboration will be automatically linked to your account.
+              </p>
+            </div>
+          `,
+        });
+        logger.info({ to: cleanEmail }, '[email] collab invite email sent');
+      } catch (err) {
+        logger.error({ to: cleanEmail, error: err.message }, '[email] collab invite email failed');
+      }
+    } else {
+      logger.warn('[email] RESEND_API_KEY not configured — skipping collaborator email');
+    }
+    
+    if (target) {
+      const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
+      if (!alreadyPending) {
+        await Notification.create({
+          id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
+          fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
+          type: 'collab_invite',
+          meta: { entityId, entityType, entityTitle, role, inviteToken: token },
+          status: 'pending',
+        });
+      }
+      res.json({ ok: true, invitedName: target.name });
+    } else {
+      res.json({ ok: true, notFound: true, invitedName: cleanEmail });
+    }
     return;
   }
 
@@ -1384,27 +1693,75 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'join_via_link') {
     const { token } = req.body;
     if (!token) { res.status(400).json({ error: 'Missing token' }); return; }
+    
     let entity = await Project.findOne({ inviteToken: token }).lean();
     let entityType = entity ? 'project' : null;
+    let isSpecificInvite = false;
+    let specificInviteDoc = null;
+    
     if (!entity) {
       entity = await Space.findOne({ inviteToken: token }).lean();
       entityType = entity ? 'space' : null;
     }
+    
+    if (!entity) {
+      specificInviteDoc = await Invite.findOne({ token });
+      if (specificInviteDoc) {
+        isSpecificInvite = true;
+        entityType = specificInviteDoc.entityType;
+        if (entityType === 'project') {
+          entity = await Project.findOne({ id: specificInviteDoc.entityId }).lean();
+        } else {
+          entity = await Space.findOne({ id: specificInviteDoc.entityId }).lean();
+        }
+      }
+    }
+    
     if (!entity) { res.status(404).json({ error: 'Invalid or expired invite link' }); return; }
-    if (entity.inviteTokenExpiry && new Date(entity.inviteTokenExpiry) < new Date()) {
+    
+    if (!isSpecificInvite && entity.inviteTokenExpiry && new Date(entity.inviteTokenExpiry) < new Date()) {
       res.status(410).json({ error: 'Invite link has expired' }); return;
     }
+    
     if (entity.ownerId === userId) { res.json({ ok: true, alreadyOwner: true, entityType, entityId: entity.id, entityTitle: entity.title, role: 'owner' }); return; }
+    
     if ((entity.collaborators || []).some(c => c.userId === userId)) { res.json({ ok: true, alreadyMember: true, entityType, entityId: entity.id, entityTitle: entity.title, role: (entity.collaborators.find(c => c.userId === userId))?.role || 'editor' }); return; }
+    
     const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
-    const role = entity.inviteLinkRole || 'editor';
-    const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role, avatarUrl: me.avatarUrl || '' };
-    const clearToken = { $unset: { inviteToken: '', inviteTokenExpiry: '' } };
-    if (entityType === 'project') {
-      await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, ...clearToken });
-    } else {
-      await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, ...clearToken });
+    
+    if (isSpecificInvite && specificInviteDoc) {
+      if (me.email.toLowerCase().trim() !== specificInviteDoc.email.toLowerCase().trim()) {
+        res.status(403).json({ error: `This invite is for ${specificInviteDoc.email}, but you are signed in as ${me.email}.` });
+        return;
+      }
     }
+    
+    const role = isSpecificInvite ? specificInviteDoc.role : (entity.inviteLinkRole || 'editor');
+    const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role, avatarUrl: me.avatarUrl || '' };
+    
+    if (entityType === 'project') {
+      if (isSpecificInvite) {
+        await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+      } else {
+        await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } });
+      }
+    } else {
+      if (isSpecificInvite) {
+        await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
+      } else {
+        await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } });
+      }
+    }
+    
+    if (isSpecificInvite) {
+      await Invite.deleteOne({ _id: specificInviteDoc._id });
+      // Mark matching pending collab invites as accepted
+      await Notification.updateMany(
+        { toUserId: userId, type: 'collab_invite', 'meta.entityId': entity.id, status: 'pending' },
+        { status: 'accepted' }
+      );
+    }
+    
     await Notification.create({
       id: 'notif_' + uid(), toUserId: entity.ownerId, fromUserId: userId,
       fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
@@ -1412,10 +1769,11 @@ router.post('/', apiLimiter, async (req, res, next) => {
       meta: { entityId: entity.id, entityType, entityTitle: entity.title, role, accepted: true },
       status: 'pending',
     });
+    
     res.json({ ok: true, entityType, entityId: entity.id, entityTitle: entity.title, role });
     return;
   }
-
+  
   // ── respond_collab_invite ──
   if (action === 'respond_collab_invite') {
     const { notifId, accept } = req.body;
@@ -1423,7 +1781,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!notif) { res.status(404).json({ error: 'Invite not found or already handled' }); return; }
     notif.status = accept ? 'accepted' : 'denied';
     await notif.save();
+    
     const me = await User.findOne({ id: userId }).select('id name username email avatarUrl -_id');
+    
     if (accept) {
       const collabEntry = { id: 'c_' + uid(), userId: me.id, name: me.name, username: me.username || '', email: me.email || '', role: notif.meta.role, avatarUrl: me.avatarUrl || '' };
       if (notif.meta.entityType === 'project') {
@@ -1432,6 +1792,12 @@ router.post('/', apiLimiter, async (req, res, next) => {
         await Space.updateOne({ id: notif.meta.entityId }, { $push: { collaborators: collabEntry } });
       }
     }
+    
+    // Clean up specific invite in database
+    if (notif.meta && notif.meta.inviteToken) {
+      await Invite.deleteOne({ token: notif.meta.inviteToken });
+    }
+    
     // Notify the inviter of the response (accept or deny)
     if (notif.fromUserId) {
       await Notification.create({

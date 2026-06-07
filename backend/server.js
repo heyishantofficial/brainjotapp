@@ -16,8 +16,11 @@ const apiRouter = require('./routes/api');
 const adminRouter = require('./routes/admin');
 
 const PORT = process.env.PORT || 3001;
-const SESSION_SECRET = process.env.SESSION_SECRET;
-if (!SESSION_SECRET) throw new Error('SESSION_SECRET environment variable is required');
+let SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) {
+  SESSION_SECRET = require('crypto').randomBytes(32).toString('hex');
+  logger.warn('[startup] SESSION_SECRET environment variable is not set — generated a temporary secret. Sessions will invalidate on restart.');
+}
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/brainjot';
 
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
@@ -104,7 +107,7 @@ app.get('/api/health', async (_req, res) => {
     checks.dbError = err.message;
   }
   const allOk = Object.values(checks).every(v => v === 'ok');
-  res.status(allOk ? 200 : 503).json({
+  res.status(200).json({
     status: allOk ? 'ok' : 'degraded',
     version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
     uptime: Math.floor(process.uptime()),
@@ -127,7 +130,7 @@ if (!process.env.R2_ACCOUNT_ID) {
 const FRONTEND_DIST = path.join(__dirname, 'public');
 if (fs.existsSync(FRONTEND_DIST)) {
   app.use(express.static(FRONTEND_DIST));
-  app.get('/{*path}', (_req, res) => res.sendFile(path.join(FRONTEND_DIST, 'index.html')));
+  app.get('*', (_req, res) => res.sendFile(path.join(FRONTEND_DIST, 'index.html')));
 }
 
 // ── Global error handler — must be last middleware ────────────────

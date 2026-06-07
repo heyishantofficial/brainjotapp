@@ -89,6 +89,7 @@ export default function App() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
+  const [googleClientId, setGoogleClientId] = useState(null);
   
   // ── Call feature state ────────────────────────────────────────────
   const [livekitEnabled, setLivekitEnabled] = useState(false);
@@ -238,6 +239,9 @@ export default function App() {
   const checkAuth = useCallback(async () => {
     try {
       const r = await api('check', null, 'GET');
+      if (r.googleClientId) {
+        setGoogleClientId(r.googleClientId);
+      }
       if (r.loggedIn) {
         setLoggedIn(true);
         setCurrentUser(r.user);
@@ -402,7 +406,7 @@ export default function App() {
   if (loading) return <Spinner />;
 
   if (inviteToken && !loggedIn) {
-    return <LoginScreen onLoginSuccess={(user) => {
+    return <LoginScreen googleClientId={googleClientId} onLoginSuccess={(user) => {
       setLoggedIn(true);
       setCurrentUser(user);
       loadData();
@@ -420,7 +424,7 @@ export default function App() {
   }
 
   if (!loggedIn) {
-    return <LoginScreen onLoginSuccess={(user) => {
+    return <LoginScreen googleClientId={googleClientId} onLoginSuccess={(user) => {
       setLoggedIn(true);
       setCurrentUser(user);
       loadData();
