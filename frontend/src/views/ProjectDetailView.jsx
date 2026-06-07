@@ -451,16 +451,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
           <div className="detail-actions">
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {/* Call button — only shown when LiveKit is configured */}
-              {livekitEnabled && (
-                <CallButton
-                  project={project}
-                  onStartCall={onStartCall}
-                  hasActiveCall={!!incomingCall}
-                  isInCall={isInCall}
-                  contrastColor={getContrastColor(project.color)}
-                />
-              )}
+              {/* Call button — rendered unconditionally so it is visible to users */}
+              <CallButton
+                project={project}
+                onStartCall={onStartCall}
+                hasActiveCall={!!incomingCall}
+                isInCall={isInCall}
+                contrastColor={getContrastColor(project.color)}
+                livekitEnabled={livekitEnabled}
+                onToast={onToast}
+              />
               <div
                 className="collab-pill has-tooltip" 
                 style={{ background: `${getContrastColor(project.color)}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}

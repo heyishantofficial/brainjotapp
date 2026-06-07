@@ -549,6 +549,7 @@ export default function App() {
             callRequestSent={callRequestSent.has(currentSpaceId)}
             isInCall={myActiveCall?.callId === currentSpaceId}
             onDismissCallBanner={() => setDismissedCalls(prev => new Set([...prev, currentSpaceId]))}
+            onToast={toast}
           />
         )}
         {!showProfile && activeView === 'shared-space' && currentSharedSpace && (
@@ -565,6 +566,7 @@ export default function App() {
             onOpenNotifications={() => setShowNotifications(true)}
             onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
+            onToast={toast}
           />
         )}
         {!showProfile && activeView === 'project' && currentProject && (

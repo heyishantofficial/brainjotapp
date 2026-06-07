@@ -38,6 +38,7 @@ export default function SpaceView({
   callRequestSent = false,
   isInCall = false,
   onDismissCallBanner,
+  onToast,
 }) {
   const activeProjects = projects.filter(p => !p.archived);
   const totalTasks = activeProjects.reduce((s, p) => s + (p.tasks || []).length, 0);
@@ -147,15 +148,15 @@ export default function SpaceView({
 
           <div className="detail-actions">
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {livekitEnabled && (
-                <CallButton
-                  project={space}
-                  onStartCall={onStartCall}
-                  hasActiveCall={!!incomingCall}
-                  isInCall={isInCall}
-                  contrastColor={contrast}
-                />
-              )}
+              <CallButton
+                project={space}
+                onStartCall={onStartCall}
+                hasActiveCall={!!incomingCall}
+                isInCall={isInCall}
+                contrastColor={contrast}
+                livekitEnabled={livekitEnabled}
+                onToast={onToast}
+              />
               <div
                 className="collab-pill has-tooltip"
                 style={{ background: `${contrast}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}

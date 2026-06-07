@@ -19,20 +19,41 @@ function VideoIcon({ color, size = 17 }) {
   );
 }
 
-export default function CallButton({ project, onStartCall, hasActiveCall, isInCall, contrastColor }) {
-  const hasCollabs = (project.collaborators || []).length > 0;
-  if (!hasCollabs) return null;
-
+export default function CallButton({ project, onStartCall, hasActiveCall, isInCall, contrastColor, livekitEnabled = false, onToast }) {
   const disabled = isInCall || hasActiveCall;
+  const hasCollabs = (project.collaborators || []).length > 0;
+  const isFeatureAvailable = livekitEnabled && hasCollabs;
+  const buttonOpacity = isFeatureAvailable ? 1 : 0.6;
+
+  const handleClick = (type) => {
+    if (disabled) return;
+    if (!livekitEnabled) {
+      if (onToast) {
+        onToast('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL in Railway to enable calls.');
+      } else {
+        alert('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL in Railway to enable calls.');
+      }
+      return;
+    }
+    if (!hasCollabs) {
+      if (onToast) {
+        onToast('You need at least one collaborator in this project/space to start a call.');
+      } else {
+        alert('You need at least one collaborator in this project/space to start a call.');
+      }
+      return;
+    }
+    onStartCall(type);
+  };
 
   return (
-    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0, opacity: buttonOpacity }}>
       <CallBtn
         title={isInCall ? 'Currently in call' : hasActiveCall ? 'Call in progress' : 'Audio Call'}
         disabled={disabled}
         active={isInCall || hasActiveCall}
         contrastColor={contrastColor}
-        onClick={() => !disabled && onStartCall('audio')}
+        onClick={() => handleClick('audio')}
       >
         <PhonePlusIcon color={contrastColor} size={17} />
         {(isInCall || hasActiveCall) && (
@@ -50,7 +71,7 @@ export default function CallButton({ project, onStartCall, hasActiveCall, isInCa
         title={isInCall ? 'Currently in call' : hasActiveCall ? 'Call in progress' : 'Video Call'}
         disabled={disabled}
         contrastColor={contrastColor}
-        onClick={() => !disabled && onStartCall('video')}
+        onClick={() => handleClick('video')}
       >
         <VideoIcon color={contrastColor} size={17} />
       </CallBtn>
