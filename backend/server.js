@@ -58,13 +58,17 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) callback(null, true);
-    else callback(new Error('CORS not allowed'));
-  },
-  credentials: true,
-  exposedHeaders: ['X-Request-ID'],
+app.use(cors((req, callback) => {
+  const origin = req.header('Origin');
+  const host = req.headers.host;
+  const sameOrigin = origin && (origin === `https://${host}` || origin === `http://${host}`);
+
+  const isAllowed = !origin || ALLOWED_ORIGINS.includes(origin) || sameOrigin;
+  callback(null, {
+    origin: isAllowed ? true : false,
+    credentials: true,
+    exposedHeaders: ['X-Request-ID'],
+  });
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -75,9 +79,14 @@ app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss: https:; frame-ancestors 'self';");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; frame-src 'self' https://accounts.google.com; connect-src 'self' wss: https:; frame-ancestors 'self';");
   next();
 });
+
+const FRONTEND_DIST = path.join(__dirname, 'public');
+if (fs.existsSync(FRONTEND_DIST)) {
+  app.use(express.static(FRONTEND_DIST));
+}
 
 const sessionStore = MongoStore.create({
   clientPromise: mongoose.connection.asPromise().then(conn => conn.getClient()),
@@ -131,10 +140,8 @@ if (!process.env.R2_ACCOUNT_ID) {
   app.use('/uploads', express.static(UPLOADS_DIR));
 }
 
-// Serve the built React frontend (production)
-const FRONTEND_DIST = path.join(__dirname, 'public');
+// Serve the built React frontend (production) - catch-all fallback for SPA routing
 if (fs.existsSync(FRONTEND_DIST)) {
-  app.use(express.static(FRONTEND_DIST));
   app.get('*any', (_req, res) => res.sendFile(path.join(FRONTEND_DIST, 'index.html')));
 }
 
