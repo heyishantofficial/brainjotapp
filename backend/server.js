@@ -29,11 +29,16 @@ function normalizeOrigin(origin) {
 
 const configuredOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(normalizeOrigin).filter(Boolean)
-  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+  : [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'https://brainjot.space',
+      'https://www.brainjot.space',
+    ];
 
-if (process.env.APP_URL) {
-  configuredOrigins.push(normalizeOrigin(process.env.APP_URL));
-}
+['APP_URL', 'FRONTEND_URL', 'CLIENT_URL', 'PUBLIC_APP_URL'].forEach((key) => {
+  if (process.env[key]) configuredOrigins.push(normalizeOrigin(process.env[key]));
+});
 
 const ALLOWED_ORIGINS = [...new Set(configuredOrigins)];
 const VERCEL_PREVIEW_HOST_PATTERN = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
