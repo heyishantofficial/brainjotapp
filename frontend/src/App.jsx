@@ -29,6 +29,8 @@ const InviteLandingView = React.lazy(() => import('./views/InviteLandingView'));
 const WordpadModal     = React.lazy(() => import('./components/WordpadModal'));
 const FeedbackPanel    = React.lazy(() => import('./components/FeedbackPanel'));
 
+const configuredGoogleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim() || null;
+
 const Spinner = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#000' }}>
     <div style={{ width: 32, height: 32, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: '#D4FF32', borderRadius: '50%', animation: 'bj-spin 0.7s linear infinite' }} />
@@ -89,7 +91,7 @@ export default function App() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
-  const [googleClientId, setGoogleClientId] = useState(null);
+  const [googleClientId, setGoogleClientId] = useState(configuredGoogleClientId);
   
   // ── Call feature state ────────────────────────────────────────────
   const [livekitEnabled, setLivekitEnabled] = useState(false);

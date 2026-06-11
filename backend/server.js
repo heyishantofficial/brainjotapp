@@ -36,6 +36,16 @@ if (process.env.APP_URL) {
 }
 
 const ALLOWED_ORIGINS = [...new Set(configuredOrigins)];
+const VERCEL_PREVIEW_HOST_PATTERN = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
+
+function isAllowedVercelPreview(origin) {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return protocol === 'https:' && VERCEL_PREVIEW_HOST_PATTERN.test(hostname);
+  } catch {
+    return false;
+  }
+}
 
 function isOriginAllowed(origin, host) {
   const normalizedOrigin = normalizeOrigin(origin);
@@ -43,7 +53,7 @@ function isOriginAllowed(origin, host) {
     normalizedOrigin === `https://${host}` ||
     normalizedOrigin === `http://${host}`
   );
-  return !normalizedOrigin || ALLOWED_ORIGINS.includes(normalizedOrigin) || sameOrigin;
+  return !normalizedOrigin || ALLOWED_ORIGINS.includes(normalizedOrigin) || sameOrigin || isAllowedVercelPreview(normalizedOrigin);
 }
 
 const app = express();
