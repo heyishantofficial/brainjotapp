@@ -23,14 +23,36 @@ if (!SESSION_SECRET) {
 }
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/brainjot';
 
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+function normalizeOrigin(origin) {
+  return origin?.trim().replace(/\/+$/, '');
+}
+
+const configuredOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(normalizeOrigin).filter(Boolean)
   : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+if (process.env.APP_URL) {
+  configuredOrigins.push(normalizeOrigin(process.env.APP_URL));
+}
+
+const ALLOWED_ORIGINS = [...new Set(configuredOrigins)];
+
+function isOriginAllowed(origin, host) {
+  const normalizedOrigin = normalizeOrigin(origin);
+  const sameOrigin = normalizedOrigin && (
+    normalizedOrigin === `https://${host}` ||
+    normalizedOrigin === `http://${host}`
+  );
+  return !normalizedOrigin || ALLOWED_ORIGINS.includes(normalizedOrigin) || sameOrigin;
+}
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: ALLOWED_ORIGINS, credentials: true }
+  cors: {
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin, null)),
+    credentials: true,
+  }
 });
 app.set('io', io);
 app.set('trust proxy', 1); // Railway sits behind a proxy
@@ -61,11 +83,8 @@ app.use((req, res, next) => {
 app.use(cors((req, callback) => {
   const origin = req.header('Origin');
   const host = req.headers.host;
-  const sameOrigin = origin && (origin === `https://${host}` || origin === `http://${host}`);
-
-  const isAllowed = !origin || ALLOWED_ORIGINS.includes(origin) || sameOrigin;
   callback(null, {
-    origin: isAllowed ? true : false,
+    origin: isOriginAllowed(origin, host) ? true : false,
     credentials: true,
     exposedHeaders: ['X-Request-ID'],
   });
@@ -105,7 +124,7 @@ const sessionMiddleware = session({
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 });

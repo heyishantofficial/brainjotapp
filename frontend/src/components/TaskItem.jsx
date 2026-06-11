@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { api, apiUpload } from '../api';
+import { api, apiUpload, apiUrl } from '../api';
 import DOMPurify from 'dompurify';
 import MentionInput from './MentionInput';
 import Avatar from './Avatar';
@@ -610,7 +610,7 @@ export default function TaskItem({
                       {isImg && (
                         <button className="btn-tf" onClick={() => onOpenLightbox(f.url.startsWith('http') ? f.url : `/${f.url}`)}>View</button>
                       )}
-                      <a className="btn-tf" href={`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`} target="_blank" rel="noreferrer" title="Download">↓</a>
+                      <a className="btn-tf" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} target="_blank" rel="noreferrer" title="Download">↓</a>
                       {!readOnly && <button className="btn-tf del" onClick={() => onDeleteFile(f.id)}>✕</button>}
                     </div>
                   </div>

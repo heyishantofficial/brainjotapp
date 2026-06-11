@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { api, apiUrl } from '../api';
 
 // ── api helper ────────────────────────────────────────────────────────────────
 
 async function adminFetch(path, options = {}) {
-  const res = await fetch(`/api/admin${path}`, {
+  const res = await fetch(apiUrl(`/api/admin${path}`), {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     ...options,
@@ -628,7 +629,7 @@ function FeedbackTab({ onConfirm }) {
   });
 
   const handleToggle = async id => {
-    const r = await (await fetch('/api/?action=toggle_feedback_status', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ feedbackId: id }) })).json();
+    const r = await api('toggle_feedback_status', { feedbackId: id });
     if (r?.ok) setItems(prev => prev.map(it => it.id !== id ? it : { ...it, status: r.status }));
   };
 
