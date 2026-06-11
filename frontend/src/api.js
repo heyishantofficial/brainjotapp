@@ -1,7 +1,23 @@
 import axios from 'axios';
 
+const rawApiUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || '').trim();
+
+function normalizeApiOrigin(url) {
+  const clean = url.replace(/\/+$/, '');
+  return clean.endsWith('/api') ? clean.slice(0, -4) : clean;
+}
+
+export const API_ORIGIN = normalizeApiOrigin(rawApiUrl);
+export const API_BASE_URL = API_ORIGIN ? `${API_ORIGIN}/api` : '/api';
+
+export function apiUrl(path = '') {
+  if (/^https?:\/\//i.test(path)) return path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_ORIGIN}${normalizedPath}`;
+}
+
 const apiInstance = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   withCredentials: true,
 });
 
@@ -29,7 +45,7 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
 export async function apiForm(action, fd) {
   try {
     if (import.meta.env.DEV) console.log(`[UPLOAD] ${action}`, [...fd.entries()].map(([k, v]) => `${k}=${v instanceof File ? v.name + '/' + v.type + '/' + v.size : v}`));
-    const res = await fetch(`/api?action=${action}`, {
+    const res = await fetch(apiUrl(`/api?action=${action}`), {
       method: 'POST',
       body: fd,
       credentials: 'include',

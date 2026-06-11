@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io as socketIO } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion';
-import { api } from './api';
+import { API_ORIGIN, api } from './api';
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
 import DashboardView from './views/DashboardView';
@@ -165,7 +165,7 @@ export default function App() {
       socketRef.current = null;
       return;
     }
-    const socket = socketIO({ withCredentials: true, transports: ['websocket'] });
+    const socket = socketIO(API_ORIGIN || undefined, { withCredentials: true, transports: ['websocket'] });
     socketRef.current = socket;
     socket.on('connect', () => {
       if (currentRoomRef.current) socket.emit('join_room', currentRoomRef.current);
