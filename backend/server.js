@@ -27,20 +27,28 @@ function normalizeOrigin(origin) {
   return origin?.trim().replace(/\/+$/, '');
 }
 
+const defaultAllowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://brainjot.space',
+  'https://www.brainjot.space',
+];
+
 const configuredOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(normalizeOrigin).filter(Boolean)
-  : [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'https://brainjot.space',
-      'https://www.brainjot.space',
-    ];
+  ? [...defaultAllowedOrigins, ...process.env.ALLOWED_ORIGINS.split(',').map(normalizeOrigin).filter(Boolean)]
+  : [...defaultAllowedOrigins];
 
 ['APP_URL', 'FRONTEND_URL', 'CLIENT_URL', 'PUBLIC_APP_URL'].forEach((key) => {
   if (process.env[key]) configuredOrigins.push(normalizeOrigin(process.env[key]));
 });
 
 const ALLOWED_ORIGINS = [...new Set(configuredOrigins)];
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL === 'true';
+const ALLOWED_ORIGIN_PATTERNS = (process.env.ALLOWED_ORIGIN_PATTERNS || '')
+  .split(',')
+  .map(pattern => pattern.trim())
+  .filter(Boolean)
+  .map(pattern => new RegExp(pattern));
 const VERCEL_PREVIEW_HOST_PATTERN = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
 
 function isAllowedVercelPreview(origin) {
@@ -52,13 +60,22 @@ function isAllowedVercelPreview(origin) {
   }
 }
 
+function matchesAllowedPattern(origin) {
+  return ALLOWED_ORIGIN_PATTERNS.some(pattern => pattern.test(origin));
+}
+
 function isOriginAllowed(origin, host) {
   const normalizedOrigin = normalizeOrigin(origin);
   const sameOrigin = normalizedOrigin && (
     normalizedOrigin === `https://${host}` ||
     normalizedOrigin === `http://${host}`
   );
-  return !normalizedOrigin || ALLOWED_ORIGINS.includes(normalizedOrigin) || sameOrigin || isAllowedVercelPreview(normalizedOrigin);
+  return !normalizedOrigin ||
+    CORS_ALLOW_ALL ||
+    ALLOWED_ORIGINS.includes(normalizedOrigin) ||
+    sameOrigin ||
+    isAllowedVercelPreview(normalizedOrigin) ||
+    matchesAllowedPattern(normalizedOrigin);
 }
 
 const app = express();
