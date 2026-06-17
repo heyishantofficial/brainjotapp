@@ -32,6 +32,8 @@ const defaultAllowedOrigins = [
   'http://127.0.0.1:5173',
   'https://brainjot.space',
   'https://www.brainjot.space',
+  'https://app.brainjot.space',
+  'https://brainjotapp-4edj.vercel.app',
 ];
 
 const configuredOrigins = process.env.ALLOWED_ORIGINS

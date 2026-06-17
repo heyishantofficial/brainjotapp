@@ -167,7 +167,7 @@ export default function App() {
       socketRef.current = null;
       return;
     }
-    const socket = socketIO(API_ORIGIN || undefined, { withCredentials: true, transports: ['websocket'] });
+    const socket = socketIO(API_ORIGIN || undefined, { withCredentials: true, transports: ['polling', 'websocket'] });
     socketRef.current = socket;
     socket.on('connect', () => {
       if (currentRoomRef.current) socket.emit('join_room', currentRoomRef.current);
