@@ -14,9 +14,10 @@ const Feedback = require('../models/Feedback');
 const Notification = require('../models/Notification');
 const Otp = require('../models/Otp');
 const Invite = require('../models/Invite');
+const LoginAttempt = require('../models/LoginAttempt');
 const { OAuth2Client } = require('google-auth-library');
 const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
-const { livekitEnabled, activeCalls, generateToken, LIVEKIT_URL } = require('../utils/livekit');
+const { livekitEnabled, ActiveCall, generateToken, removeParticipant, LIVEKIT_URL } = require('../utils/livekit');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -76,6 +77,7 @@ async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTit
 }
 
 const SALT_ROUNDS = 12;
+const MAX_STORAGE_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB per user
 
 // ── Multer setup ──────────────────────────────────────────────────
 const ALLOWED_EXT = new Set([
@@ -252,12 +254,50 @@ async function seedDefaultData(userId) {
   }
 }
 
+// ── MongoDB-backed rate limit store ──────────────────────────────
+// Shared across all server instances — safe for horizontal scaling.
+// Falls back gracefully (allows request through) if DB is unreachable.
+class MongoRateLimitStore {
+  constructor(windowMs, collectionName = 'rate_limits') {
+    this.windowMs = windowMs;
+    this.collectionName = collectionName;
+  }
+  get col() {
+    return mongoose.connection.db?.collection(this.collectionName);
+  }
+  async increment(key) {
+    if (!this.col) return { totalHits: 1, resetTime: new Date(Date.now() + this.windowMs) };
+    const now = new Date();
+    const resetTime = new Date(now.getTime() + this.windowMs);
+    try {
+      const doc = await this.col.findOneAndUpdate(
+        { key, resetTime: { $gt: now } },
+        { $inc: { totalHits: 1 }, $setOnInsert: { key, resetTime } },
+        { upsert: true, returnDocument: 'after' }
+      );
+      return { totalHits: doc.totalHits, resetTime: doc.resetTime };
+    } catch {
+      return { totalHits: 1, resetTime };
+    }
+  }
+  async decrement(key) {
+    if (!this.col) return;
+    await this.col.updateOne({ key }, { $inc: { totalHits: -1 } }).catch(() => {});
+  }
+  async resetKey(key) {
+    if (!this.col) return;
+    await this.col.deleteOne({ key }).catch(() => {});
+  }
+}
+
 // ── Rate limiters ─────────────────────────────────────────────────
+// Auth limiter uses MongoDB so the 20-attempt window is shared across all instances.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  store: new MongoRateLimitStore(15 * 60 * 1000, 'rate_limits_auth'),
   handler: (req, res) => {
     logger.warn({ ip: req.ip, action: req.query.action }, '[rate_limit] auth limiter triggered');
     res.status(429).json({ error: 'Too many attempts, please try again later' });
@@ -305,10 +345,18 @@ router.get('/download', requireAuth, (req, res) => {
 
   if (!fileUrl) return res.status(400).send('File URL is required');
 
-  // R2 files have a full HTTPS public URL — only redirect to our own R2 bucket domain
+  // R2 files have a full HTTPS public URL — only redirect to our own R2 bucket domain.
+  // Use strict hostname comparison instead of string prefix to prevent subdomain bypass attacks.
   if (fileUrl.startsWith('https://')) {
     const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
-    if (!R2_PUBLIC_URL || !fileUrl.startsWith(R2_PUBLIC_URL + '/')) {
+    if (!R2_PUBLIC_URL) return res.status(400).send('Invalid file URL');
+    try {
+      const allowedHost = new URL(R2_PUBLIC_URL).hostname;
+      const requestedHost = new URL(fileUrl).hostname;
+      if (!allowedHost || requestedHost !== allowedHost) {
+        return res.status(400).send('Invalid file URL');
+      }
+    } catch {
       return res.status(400).send('Invalid file URL');
     }
     return res.redirect(fileUrl);
@@ -426,9 +474,10 @@ router.get('/', apiLimiter, async (req, res) => {
     const isAdmin = req.session.userRole === 'superadmin';
     const raw = await Feedback.find({}).sort({ createdAt: -1 }).limit(200).lean();
     res.json({
-      items: raw.map(({ _id, __v, upvotes, userId: feedbackUserId, ...rest }) => ({
+      items: raw.map(({ _id, __v, upvotes, userId: feedbackUserId, userName, ...rest }) => ({
         ...rest,
-        ...(isAdmin ? { userId: feedbackUserId } : {}),
+        // Only admins see who submitted each item — prevents exposing submitter names to all users
+        ...(isAdmin ? { userId: feedbackUserId, userName } : {}),
         upvoteCount: upvotes.length,
         hasUpvoted: upvotes.includes(userId),
       })),
@@ -470,6 +519,13 @@ router.get('/', apiLimiter, async (req, res) => {
       }
     } else {
       if (!ALLOWED_EXT.has(ext)) return res.status(400).json({ error: 'File type not allowed' });
+      // Enforce per-user storage quota before issuing a presigned URL
+      const uploader = await User.findOne({ id: userId }).select('storageUsedBytes -_id').lean();
+      const usedBytes = uploader?.storageUsedBytes || 0;
+      const requestedBytes = Number(size) || 0;
+      if (usedBytes + requestedBytes > MAX_STORAGE_BYTES) {
+        return res.status(413).json({ error: `Storage quota exceeded. You have used ${Math.round(usedBytes / 1024 / 1024)} MB of your ${Math.round(MAX_STORAGE_BYTES / 1024 / 1024)} MB limit.` });
+      }
     }
 
     let key;
@@ -477,9 +533,22 @@ router.get('/', apiLimiter, async (req, res) => {
       key = `avatars/${userId}.jpg`;
     } else if (type === 'task') {
       if (!projectId || !taskId) return res.status(400).json({ error: 'projectId and taskId required' });
+      // Verify the user has editor access before issuing a presigned URL (prevents storage cost abuse)
+      const taskAccess = await Project.exists({
+        id: projectId,
+        'tasks.id': taskId,
+        $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }],
+      });
+      if (!taskAccess) return res.status(403).json({ error: 'No editor access to this task' });
       key = makeKey(taskId, projectId, ext);
     } else {
       if (!projectId) return res.status(400).json({ error: 'projectId required' });
+      // Verify editor access before issuing a presigned URL
+      const projAccess = await Project.exists({
+        id: projectId,
+        $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }],
+      });
+      if (!projAccess) return res.status(403).json({ error: 'No editor access to this project' });
       key = makeKey(null, projectId, ext);
     }
 
@@ -513,8 +582,9 @@ router.get('/', apiLimiter, async (req, res) => {
     const roomName = `call_${entityType}_${callId}`;
     const socketRoom = `${entityType}:${callId}`;
 
-    if (!activeCalls.has(callId)) {
-      activeCalls.set(callId, { hostUserId: userId, hostName: userName, callType, roomName, entityType, startedAt: Date.now() });
+    const existingCall = await ActiveCall.findOne({ callId }).lean();
+    if (!existingCall) {
+      await ActiveCall.create({ callId, hostUserId: userId, hostName: userName, callType, roomName, entityType });
       req.app.get('io')?.to(socketRoom).emit('call:started', { callId, entityType, hostUserId: userId, hostName: userName, callType });
       logger.info({ callId, entityType, userId, callType }, '[call] started');
     }
@@ -541,6 +611,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
         }
         if (password.length < 8) {
           return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (password.length > 256) {
+          return res.status(400).json({ error: 'Password too long (max 256 characters)' });
         }
         if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
           return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
@@ -584,16 +657,41 @@ router.post('/', apiLimiter, async (req, res, next) => {
         if (!email?.trim() || !password) {
           return res.status(400).json({ error: 'Email and password are required' });
         }
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        const cleanEmail = email.toLowerCase().trim();
+
+        // Per-email brute force protection: lock out after 10 consecutive failures for 1 hour
+        const MAX_LOGIN_FAILURES = 10;
+        const attemptDoc = await LoginAttempt.findOne({ email: cleanEmail });
+        if (attemptDoc && attemptDoc.count >= MAX_LOGIN_FAILURES) {
+          logger.warn({ ip: req.ip, email: cleanEmail }, '[auth] login_blocked — per-email lockout');
+          return res.status(429).json({ error: 'Too many failed attempts. Try again in an hour or use email OTP to sign in.' });
+        }
+
+        const user = await User.findOne({ email: cleanEmail });
         if (!user) {
           logger.warn({ ip: req.ip, reason: 'unknown_email' }, '[auth] login_failure');
+          // Still increment attempt counter on unknown email to prevent timing-based enumeration
+          await LoginAttempt.findOneAndUpdate(
+            { email: cleanEmail },
+            { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
+            { upsert: true }
+          );
           return res.status(401).json({ error: 'Invalid email or password' });
         }
         const match = await bcrypt.compare(password, user.passwordHash);
         if (!match) {
           logger.warn({ ip: req.ip, userId: user.id, reason: 'wrong_password' }, '[auth] login_failure');
+          await LoginAttempt.findOneAndUpdate(
+            { email: cleanEmail },
+            { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
+            { upsert: true }
+          );
           return res.status(401).json({ error: 'Invalid email or password' });
         }
+
+        // Successful login — clear failure counter
+        await LoginAttempt.deleteOne({ email: cleanEmail });
+
         // Auto-elevate if email is in ADMIN_EMAILS
         if (ADMIN_EMAILS.includes(user.email) && user.role !== 'superadmin') {
           await User.updateOne({ id: user.id }, { role: 'superadmin' });
@@ -713,13 +811,20 @@ router.post('/', apiLimiter, async (req, res, next) => {
         }
         
         const cleanEmail = email.toLowerCase().trim();
+
+        // Enforce 60-second resend cooldown per email to prevent OTP flooding
+        const existingOtp = await Otp.findOne({ email: cleanEmail });
+        if (existingOtp?.lastSentAt && (Date.now() - existingOtp.lastSentAt.getTime()) < 60 * 1000) {
+          return res.status(429).json({ error: 'Please wait before requesting another code' });
+        }
+
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-        
+
         await Otp.findOneAndUpdate(
           { email: cleanEmail },
-          { code: otpCode, expiresAt },
-          { upsert: true, new: true }
+          { code: otpCode, expiresAt, attempts: 0, lastSentAt: new Date() },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         
         await resend.emails.send({
@@ -747,9 +852,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
           `,
         });
         
-        const userExists = await User.exists({ email: cleanEmail });
         logger.info({ email: cleanEmail }, '[email] otp_sent');
-        res.json({ ok: true, exists: !!userExists });
+        // Do not reveal whether the email has a registered account (prevents enumeration)
+        res.json({ ok: true });
       } catch (err) {
         next(err);
       }
@@ -766,19 +871,36 @@ router.post('/', apiLimiter, async (req, res, next) => {
         }
         
         const cleanEmail = email.toLowerCase().trim();
-        const otpDoc = await Otp.findOne({ email: cleanEmail, code: otp.trim() });
-        
+
+        // Look up OTP by email first so we can apply the attempt counter
+        const otpDoc = await Otp.findOne({ email: cleanEmail });
+
         if (!otpDoc || otpDoc.expiresAt < new Date()) {
           return res.status(400).json({ error: 'Invalid or expired OTP code' });
         }
-        
+
+        // Kill the OTP after 5 wrong guesses to prevent brute force
+        const MAX_OTP_ATTEMPTS = 5;
+        if ((otpDoc.attempts || 0) >= MAX_OTP_ATTEMPTS) {
+          await Otp.deleteOne({ _id: otpDoc._id });
+          return res.status(400).json({ error: 'Too many incorrect attempts. Request a new code.' });
+        }
+
+        if (otpDoc.code !== otp.trim()) {
+          otpDoc.attempts = (otpDoc.attempts || 0) + 1;
+          await otpDoc.save();
+          const remaining = MAX_OTP_ATTEMPTS - otpDoc.attempts;
+          return res.status(400).json({ error: `Invalid code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` });
+        }
+
         const user = await User.findOne({ email: cleanEmail });
         if (!user) {
-          // Tell frontend the OTP is verified, but user needs profile signup
+          // OTP is valid but no account yet — frontend handles profile creation step.
+          // Do NOT delete OTP here; register_otp will verify and consume it.
           res.json({ ok: true, verified: true, exists: false });
           return;
         }
-        
+
         await Otp.deleteOne({ _id: otpDoc._id });
         
         if (ADMIN_EMAILS.includes(user.email) && user.role !== 'superadmin') {
@@ -855,6 +977,59 @@ router.post('/', apiLimiter, async (req, res, next) => {
     });
   }
 
+  // ── reset_password_via_otp ──
+  // Lets a password-based user reset a forgotten password by proving email ownership via OTP.
+  // Also accepts OTP/Google users who want to set a password for the first time.
+  if (action === 'reset_password_via_otp') {
+    return authLimiter(req, res, async () => {
+      try {
+        const { email, otp, newPassword } = req.body;
+        if (!email || !otp || !newPassword) {
+          return res.status(400).json({ error: 'Email, OTP and new password are required' });
+        }
+        if (newPassword.length < 8) {
+          return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (newPassword.length > 256) {
+          return res.status(400).json({ error: 'Password too long (max 256 characters)' });
+        }
+        if (!/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+          return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
+        }
+        const cleanEmail = email.toLowerCase().trim();
+        const otpDoc = await Otp.findOne({ email: cleanEmail });
+        if (!otpDoc || otpDoc.expiresAt < new Date()) {
+          return res.status(400).json({ error: 'Invalid or expired OTP code' });
+        }
+        const MAX_OTP_ATTEMPTS = 5;
+        if ((otpDoc.attempts || 0) >= MAX_OTP_ATTEMPTS) {
+          await Otp.deleteOne({ _id: otpDoc._id });
+          return res.status(400).json({ error: 'Too many incorrect attempts. Request a new code.' });
+        }
+        if (otpDoc.code !== otp.trim()) {
+          otpDoc.attempts = (otpDoc.attempts || 0) + 1;
+          await otpDoc.save();
+          const remaining = MAX_OTP_ATTEMPTS - otpDoc.attempts;
+          return res.status(400).json({ error: `Invalid code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` });
+        }
+        const user = await User.findOne({ email: cleanEmail });
+        if (!user) {
+          return res.status(404).json({ error: 'No account found for this email' });
+        }
+        await Otp.deleteOne({ _id: otpDoc._id });
+        await User.updateOne({ id: user.id }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
+        logger.info({ userId: user.id, ip: req.ip }, '[auth] reset_password_via_otp');
+        // Log them in so they land on the dashboard immediately after reset
+        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
+        req.session.userId = user.id;
+        req.session.userRole = user.role || 'user';
+        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
   // ── logout ──
   if (action === 'logout') {
     req.session.destroy(() => res.json({ ok: true }));
@@ -922,18 +1097,25 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) { res.status(400).json({ error: 'Both passwords required' }); return; }
     if (newPassword.length < 8) { res.status(400).json({ error: 'New password must be at least 8 characters' }); return; }
+    if (newPassword.length > 256) { res.status(400).json({ error: 'Password too long (max 256 characters)' }); return; }
     const user = await User.findOne({ id: userId });
+    if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+    // OTP and Google OAuth accounts have no password — give a clear error instead of a silent failure
+    if (user.passwordHash === 'OTP_AUTH_USER' || user.passwordHash === 'GOOGLE_OAUTH_USER') {
+      return res.status(400).json({ error: 'Your account uses email OTP or Google Sign-In and does not have a password to change.' });
+    }
     const match = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!match) { res.status(401).json({ error: 'Current password is incorrect' }); return; }
     await User.updateOne({ id: userId }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
     logger.info({ userId, ip: req.ip }, '[audit] change_password');
-    // Invalidate all other active sessions so stolen cookies can't be used after a password change
+    // Invalidate all other active sessions so stolen cookies can't be used after a password change.
+    // Filter at MongoDB level with a regex on the serialized JSON — avoids O(N) full collection scan in Node.
     const db = mongoose.connection.db;
-    const allSessions = await db.collection('sessions').find({}).toArray();
-    const toDelete = allSessions
-      .filter(s => { try { return JSON.parse(s.session).userId === userId; } catch { return false; } })
-      .filter(s => s._id.toString() !== req.sessionID)
-      .map(s => s._id);
+    const staleSessions = await db.collection('sessions').find(
+      { session: { $regex: `"userId":"${userId}"` }, _id: { $ne: req.sessionID } },
+      { projection: { _id: 1 } }
+    ).toArray();
+    const toDelete = staleSessions.map(s => s._id);
     if (toDelete.length) await db.collection('sessions').deleteMany({ _id: { $in: toDelete } });
     res.json({ ok: true });
     return;
@@ -942,10 +1124,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── delete_account ──
   if (action === 'delete_account') {
     const { password } = req.body;
-    if (!password) { res.status(400).json({ error: 'Password required' }); return; }
     const user = await User.findOne({ id: userId });
-    const match = await bcrypt.compare(password, user.passwordHash);
-    if (!match) { res.status(401).json({ error: 'Incorrect password' }); return; }
+    if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+    // OTP and Google OAuth users have no password — they are already authenticated via session
+    const isPasswordlessAccount = user.passwordHash === 'OTP_AUTH_USER' || user.passwordHash === 'GOOGLE_OAUTH_USER';
+    if (!isPasswordlessAccount) {
+      if (!password) { res.status(400).json({ error: 'Password required' }); return; }
+      const match = await bcrypt.compare(password, user.passwordHash);
+      if (!match) { res.status(401).json({ error: 'Incorrect password' }); return; }
+    }
     // Delete all stored files before removing documents
     const userProjects = await Project.find({ ownerId: userId }).select('files tasks').lean();
     logger.info({ userId, ip: req.ip, projectCount: userProjects.length }, '[audit] delete_account');
@@ -1075,6 +1262,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const { projectId } = req.body;
     const source = await Project.findOne({ id: projectId, ownerId: userId }).lean();
     if (!source) { res.status(404).json({ error: 'Project not found' }); return; }
+    const totalProjects = await Project.countDocuments({ ownerId: userId });
+    if (totalProjects >= 200) { res.status(429).json({ error: 'Project limit reached (200 max)' }); return; }
     const dupId = 'proj_' + uid();
     const { _id, __v, id, ...rest } = source;
     await Project.create({
@@ -1095,6 +1284,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!projectId || !targetSpaceId) { res.status(400).json({ error: 'Missing data' }); return; }
     const source = await Project.findOne({ id: projectId, ownerId: userId }).lean();
     if (!source) { res.status(404).json({ error: 'Project not found' }); return; }
+    const totalProjects = await Project.countDocuments({ ownerId: userId });
+    if (totalProjects >= 200) { res.status(429).json({ error: 'Project limit reached (200 max)' }); return; }
     const space = await Space.findOne({ id: targetSpaceId, ownerId: userId });
     if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
     const { _id, __v, id, ...rest } = source;
@@ -1169,22 +1360,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
     return;
   }
 
-  // ── invite_collaborator ──
+  // ── invite_collaborator (DEPRECATED) ──
+  // This endpoint bypasses identity verification and the token-based invite flow.
+  // Use send_collab_invite instead — it generates a secure token, sends a verified email,
+  // and creates an in-app notification for existing users.
   if (action === 'invite_collaborator') {
-    const { projectId, name = '', email, role = 'editor' } = req.body;
-    if (!projectId || !email?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
-    if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
-    const proj = await Project.findOne({ id: projectId, ownerId: userId });
-    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
-    const exists = proj.collaborators.some(c => c.email.toLowerCase() === email.toLowerCase());
-    if (exists) { res.status(400).json({ error: 'Collaborator already exists' }); return; }
-    const collab = { id: 'collab_' + uid(), name: name.trim().slice(0, 100) || email.replace(/@.*/, ''), email: email.trim(), role, status: 'invited' };
-    proj.collaborators.push(collab);
-    await proj.save();
-    const inviter = await User.findOne({ id: userId }).select('name -_id');
-    sendInviteEmail({ to: email.trim(), toName: name.trim(), inviterName: inviter?.name || 'Someone', projectTitle: proj.title });
-    res.json({ ok: true, collaborator: collab });
-    return;
+    return res.status(410).json({
+      error: 'This endpoint is deprecated. Use action=send_collab_invite instead.',
+      useInstead: 'send_collab_invite',
+    });
   }
 
   // ── remove_collaborator ──
@@ -1193,12 +1377,19 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, ownerId: userId });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     logger.info({ userId, projectId, collaboratorId }, '[audit] remove_collaborator');
+    // Capture the removed collaborator's userId before filtering so we can evict them from any active call
+    const removedCollab = proj.collaborators.find(c => c.id === collaboratorId);
     proj.collaborators = proj.collaborators.filter(c => c.id !== collaboratorId);
     proj.tasks.forEach(t => {
       if (t.assignee === collaboratorId) t.assignee = '';
       if (Array.isArray(t.assignees)) t.assignees = t.assignees.filter(a => a !== collaboratorId);
     });
     await proj.save();
+    // Evict the removed collaborator from any active LiveKit call for this project
+    if (livekitEnabled && removedCollab?.userId) {
+      const activeCall = await ActiveCall.findOne({ callId: projectId }).lean();
+      if (activeCall) await removeParticipant(activeCall.roomName, removedCollab.userId);
+    }
     res.json({ ok: true });
     return;
   }
@@ -1326,6 +1517,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const taskId_raw = String(task.id);
     const idCollision = proj.tasks.some(t => t.id === taskId_raw);
+    // Only allow assignee IDs that actually exist on this project to prevent phantom notifications
+    const validCollabIds = new Set(['me', ...proj.collaborators.map(c => c.id)]);
     const safeTask = {
       id: idCollision ? 'task_' + uid() : taskId_raw,
       text: String(task.text).trim().slice(0, 1000),
@@ -1333,7 +1526,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
       priority: ['urgent', 'important', 'later', ''].includes(task.priority) ? task.priority : '',
       deadline: task.deadline || '',
       badge: String(task.badge || 'Custom').slice(0, 50),
-      assignees: Array.isArray(task.assignees) ? task.assignees.map(String) : [],
+      assignees: Array.isArray(task.assignees) ? task.assignees.map(String).filter(a => validCollabIds.has(a)) : [],
       comments: [],
       notes: '', richNotes: '', files: [],
     };
@@ -1413,6 +1606,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         { $push: { 'tasks.$.files': fe } },
       );
       if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
+      if (fe.size) await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: fe.size } });
       logger.info({ userId, fileId, fileKey, projectId, taskId }, '[upload] task file confirmed');
       return res.json({ ok: true, file: fe });
     }
@@ -1423,6 +1617,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
       { $push: { files: fe } },
     );
     if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
+    if (fe.size) await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: fe.size } });
     logger.info({ userId, fileId, fileKey, projectId }, '[upload] project file confirmed');
     return res.json({ ok: true, file: fe });
   }
@@ -1432,10 +1627,16 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     const pid = req.body.projectId;
     if (!pid || !req.file) { res.status(400).json({ error: !pid ? 'Missing projectId' : 'No file received' }); return; }
+    const uploader = await User.findOne({ id: userId }).select('storageUsedBytes -_id').lean();
+    if ((uploader?.storageUsedBytes || 0) + req.file.size > MAX_STORAGE_BYTES) {
+      fs.unlinkSync(req.file.path);
+      return res.status(413).json({ error: 'Storage quota exceeded (1 GB limit)' });
+    }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: pid, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { files: fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
+    await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: req.file.size } });
     res.json({ ok: true, file: fe });
     return;
   }
@@ -1445,10 +1646,16 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     const { projectId, taskId } = req.body;
     if (!projectId || !taskId || !req.file) { res.status(400).json({ error: !projectId ? 'Missing projectId' : !taskId ? 'Missing taskId' : 'No file received' }); return; }
+    const uploader = await User.findOne({ id: userId }).select('storageUsedBytes -_id').lean();
+    if ((uploader?.storageUsedBytes || 0) + req.file.size > MAX_STORAGE_BYTES) {
+      fs.unlinkSync(req.file.path);
+      return res.status(413).json({ error: 'Storage quota exceeded (1 GB limit)' });
+    }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
     const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { 'tasks.$.files': fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
+    await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: req.file.size } });
     res.json({ ok: true, file: fe });
     return;
   }
@@ -1459,7 +1666,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const f = proj.files.find(x => x.id === fileId);
-    if (f) await deleteStoredFile(f);
+    if (f) {
+      await deleteStoredFile(f);
+      if (f.size) await User.updateOne({ id: proj.ownerId }, { $inc: { storageUsedBytes: -f.size } });
+    }
     proj.files = proj.files.filter(x => x.id !== fileId);
     await proj.save();
     res.json({ ok: true });
@@ -1474,7 +1684,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) {
       const f = task.files.find(x => x.id === fileId);
-      if (f) await deleteStoredFile(f);
+      if (f) {
+        await deleteStoredFile(f);
+        if (f.size) await User.updateOne({ id: proj.ownerId }, { $inc: { storageUsedBytes: -f.size } });
+      }
       task.files = task.files.filter(x => x.id !== fileId);
     }
     await proj.save();
@@ -1566,8 +1779,14 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!spaceId || !collaboratorId) { res.status(400).json({ error: 'Missing data' }); return; }
     const space = await Space.findOne({ id: spaceId, ownerId: userId });
     if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    const removedCollab = space.collaborators.find(c => c.id === collaboratorId);
     space.collaborators = space.collaborators.filter(c => c.id !== collaboratorId);
     await space.save();
+    // Evict from active LiveKit call for this space
+    if (livekitEnabled && removedCollab?.userId) {
+      const activeCall = await ActiveCall.findOne({ callId: spaceId }).lean();
+      if (activeCall) await removeParticipant(activeCall.roomName, removedCollab.userId);
+    }
     res.json({ ok: true });
     return;
   }
@@ -1743,13 +1962,27 @@ router.post('/', apiLimiter, async (req, res, next) => {
       if (isSpecificInvite) {
         await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
       } else {
-        await Project.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } });
+        // Atomic update: the inviteToken filter ensures only one concurrent request wins.
+        // If the token was already cleared by a race partner, findOneAndUpdate returns null.
+        const atomicResult = await Project.findOneAndUpdate(
+          { id: entity.id, inviteToken: token },
+          { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } }
+        );
+        if (!atomicResult) {
+          return res.status(410).json({ error: 'This invite link was just used. Ask the owner to generate a new one.' });
+        }
       }
     } else {
       if (isSpecificInvite) {
         await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry } });
       } else {
-        await Space.updateOne({ id: entity.id }, { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } });
+        const atomicResult = await Space.findOneAndUpdate(
+          { id: entity.id, inviteToken: token },
+          { $push: { collaborators: collabEntry }, $unset: { inviteToken: '', inviteTokenExpiry: '' } }
+        );
+        if (!atomicResult) {
+          return res.status(410).json({ error: 'This invite link was just used. Ask the owner to generate a new one.' });
+        }
       }
     }
     
@@ -1883,7 +2116,19 @@ router.post('/', apiLimiter, async (req, res, next) => {
       allNotifs.push({ id: 'notif_' + uid(), ...notifBase, toUserId, type: 'task_comment',
         meta: { entityId: projectId, entityType: 'project', entityTitle: proj.title, taskId, taskTitle: task?.text?.slice(0, 60) || '', commentText: text.trim().slice(0, 100) } });
     }
-    if (allNotifs.length) await Notification.insertMany(allNotifs);
+    if (allNotifs.length) {
+      // Rate-limit outgoing notifications: a single user can send at most 100 per hour.
+      // This prevents a malicious collaborator from flooding targets via @mentions.
+      const recentOutgoing = await Notification.countDocuments({
+        fromUserId: userId,
+        createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) },
+      });
+      if (recentOutgoing + allNotifs.length <= 100) {
+        await Notification.insertMany(allNotifs);
+      } else {
+        logger.warn({ userId, recentOutgoing, attempted: allNotifs.length }, '[rate_limit] notification outgoing limit reached');
+      }
+    }
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, comment });
     return;

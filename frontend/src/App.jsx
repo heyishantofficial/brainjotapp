@@ -311,6 +311,11 @@ export default function App() {
   const handleLogout = async () => {
     stopDeadlineReminders();
     await api('logout');
+    // Clear all SW caches so stale authenticated data isn't served to the next user on this browser
+    if ('caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map(n => caches.delete(n)));
+    }
     setLoggedIn(false);
     setCurrentUser(null);
   };

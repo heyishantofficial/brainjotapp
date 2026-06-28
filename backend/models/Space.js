@@ -24,4 +24,7 @@ const spaceSchema = new mongoose.Schema({
   inviteTokenExpiry: { type: Date, default: null },
 });
 
+spaceSchema.index({ 'collaborators.userId': 1 });
+spaceSchema.index({ inviteToken: 1 }, { sparse: true });
+
 module.exports = mongoose.model('Space', spaceSchema);

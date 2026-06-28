@@ -1,0 +1,79 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run every Monday at 08:00 UTC to catch newly published CVEs
+    - cron: '0 8 * * 1'
+
+jobs:
+  audit-backend:
+    name: Backend — npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Run npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
+        working-directory: backend
+
+  audit-frontend:
+    name: Frontend — npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Run npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
+  syntax-check:
+    name: Backend — syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check backend files compile without errors
+        run: |
+          node --check server.js
+          node --check routes/api.js
+          node --check routes/admin.js
+          node --check models/User.js
+          node --check models/Project.js
+          node --check models/Space.js
+          node --check models/ActiveCall.js
+          node --check models/Otp.js
+          node --check models/LoginAttempt.js
+          node --check models/Notification.js
+          node --check utils/livekit.js
+        working-directory: backend

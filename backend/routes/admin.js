@@ -9,7 +9,9 @@ const { deleteUserFiles } = require('../utils/storage');
 
 async function auditLog(db, adminId, action, target, meta = {}) {
   try {
-    await db.collection('audit_log').insertOne({ adminId, action, target, meta, timestamp: new Date() });
+    // expireAt drives the TTL index — entries auto-delete after 1 year
+    const expireAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+    await db.collection('audit_log').insertOne({ adminId, action, target, meta, timestamp: new Date(), expireAt });
   } catch { /* never let audit failure break the response */ }
 }
 
@@ -100,12 +102,14 @@ router.post('/users/:id/revoke', async (req, res) => {
     }
     const user = await User.findOneAndUpdate({ id: req.params.id }, { role: 'user' }, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    // Force-expire all sessions for this user so the revocation takes effect immediately
+    // Force-expire all sessions for this user so the revocation takes effect immediately.
+    // Filter at MongoDB level with a regex — avoids O(N) full scan in Node.
     const db = mongoose.connection.db;
-    const allSessions = await db.collection('sessions').find({}).toArray();
-    const toDelete = allSessions
-      .filter(s => { try { return JSON.parse(s.session).userId === req.params.id; } catch { return false; } })
-      .map(s => s._id);
+    const staleSessions = await db.collection('sessions').find(
+      { session: { $regex: `"userId":"${req.params.id}"` } },
+      { projection: { _id: 1 } }
+    ).toArray();
+    const toDelete = staleSessions.map(s => s._id);
     if (toDelete.length) await db.collection('sessions').deleteMany({ _id: { $in: toDelete } });
     await auditLog(db, req.session.userId, 'revoke_admin', req.params.id, { email: user.email });
     res.json({ ok: true });
@@ -131,13 +135,18 @@ router.delete('/users/:id', async (req, res) => {
       Project.deleteMany({ ownerId: targetId }),
       Space.deleteMany({ ownerId: targetId }),
       Feedback.deleteMany({ userId: targetId }),
+      // Remove this user from collaborator lists on other users' projects and spaces
+      // (same cleanup that self-delete performs — previously missing from admin path)
+      Project.updateMany({ 'collaborators.userId': targetId }, { $pull: { collaborators: { userId: targetId } } }),
+      Space.updateMany({ 'collaborators.userId': targetId }, { $pull: { collaborators: { userId: targetId } } }),
     ]);
-    // Force-expire all sessions for this user
+    // Force-expire all sessions for this user — filter at MongoDB level, not in Node
     const db = mongoose.connection.db;
-    const allSessions = await db.collection('sessions').find({}).toArray();
-    const sessionIds = allSessions
-      .filter(s => { try { return JSON.parse(s.session).userId === targetId; } catch { return false; } })
-      .map(s => s._id);
+    const staleSessions = await db.collection('sessions').find(
+      { session: { $regex: `"userId":"${targetId}"` } },
+      { projection: { _id: 1 } }
+    ).toArray();
+    const sessionIds = staleSessions.map(s => s._id);
     if (sessionIds.length) {
       await db.collection('sessions').deleteMany({ _id: { $in: sessionIds } });
     }

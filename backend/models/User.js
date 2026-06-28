@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
   passwordHash: { type: String, required: true },
   role: { type: String, enum: ['user', 'superadmin'], default: 'user' },
   avatarUrl: { type: String, default: '' },
+  storageUsedBytes: { type: Number, default: 0 }, // running total of uploaded file bytes
   createdAt: { type: Date, default: Date.now },
 });
 

@@ -166,7 +166,14 @@ export default function Sidebar({
     e.dataTransfer.effectAllowed = 'copyMove';
     const pill = document.createElement('div');
     pill.style.cssText = 'position:fixed;left:-9999px;top:0;display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#f5f5f5;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.15);box-shadow:0 4px 16px rgba(0,0,0,0.5);white-space:nowrap';
-    pill.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0"></span><span>${title}</span><span style="font-size:10px;color:#666;margin-left:4px">⌘ move · drag copy</span>`;
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0`;
+    const label = document.createElement('span');
+    label.textContent = title;
+    const hint = document.createElement('span');
+    hint.style.cssText = 'font-size:10px;color:#666;margin-left:4px';
+    hint.textContent = '⌘ move · drag copy';
+    pill.appendChild(dot); pill.appendChild(label); pill.appendChild(hint);
     document.body.appendChild(pill);
     e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
     requestAnimationFrame(() => document.body.removeChild(pill));
@@ -193,7 +200,11 @@ export default function Sidebar({
     e.dataTransfer.effectAllowed = 'move';
     const pill = document.createElement('div');
     pill.style.cssText = 'position:fixed;left:-9999px;top:0;display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#f5f5f5;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.15);box-shadow:0 4px 16px rgba(0,0,0,0.5);white-space:nowrap';
-    pill.innerHTML = `<span style="width:8px;height:8px;border-radius:3px;background:${color};display:inline-block;flex-shrink:0"></span><span>${title}</span>`;
+    const dot2 = document.createElement('span');
+    dot2.style.cssText = `width:8px;height:8px;border-radius:3px;background:${color};display:inline-block;flex-shrink:0`;
+    const label2 = document.createElement('span');
+    label2.textContent = title;
+    pill.appendChild(dot2); pill.appendChild(label2);
     document.body.appendChild(pill);
     e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
     requestAnimationFrame(() => document.body.removeChild(pill));

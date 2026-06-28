@@ -74,4 +74,11 @@ const projectSchema = new mongoose.Schema({
   inviteTokenExpiry: { type: Date, default: null },
 });
 
+// Indexes for the hot authorization query:
+//   Project.find({ $or: [{ ownerId }, { 'collaborators.userId' }] })
+// Without these, every API call does a full collection scan.
+projectSchema.index({ 'collaborators.userId': 1 });
+projectSchema.index({ spaceId: 1 });
+projectSchema.index({ inviteToken: 1 }, { sparse: true });
+
 module.exports = mongoose.model('Project', projectSchema);

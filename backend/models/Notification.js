@@ -19,7 +19,7 @@ const notifSchema = new mongoose.Schema({
     accepted:    Boolean,
   },
   status: { type: String, enum: ['pending', 'accepted', 'denied', 'read'], default: 'pending' },
-  createdAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now, expires: 90 * 24 * 60 * 60 }, // auto-delete after 90 days
 });
 
 module.exports = mongoose.model('Notification', notifSchema);
