@@ -4,37 +4,35 @@ import { api } from '../api';
 export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPrivacy, onOpenTerms }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [authType, setAuthType] = useState('password'); // 'password' | 'otp'
-  
-  // Fields
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [otp, setOtp] = useState('');
-  
-  // OTP States
+
   const [otpSent, setOtpSent] = useState(false);
   const [emailExists, setEmailExists] = useState(false);
-  
-  const [usernameStatus, setUsernameStatus] = useState(null); // null | 'checking' | 'available' | 'taken' | string (error)
+  const [showPassword, setShowPassword] = useState(false);
+
+  const [usernameStatus, setUsernameStatus] = useState(null);
   const [consentGiven, setConsentGiven] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const debounceRef = useRef(null);
 
-  // Auto-suggest username from name
+  const isRegistering = (mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists);
+
   useEffect(() => {
-    if ((mode === 'register' || (authType === 'otp' && otpSent && !emailExists)) && name && !username) {
+    if (isRegistering && name && !username) {
       const suggested = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9_]/g, '').slice(0, 20);
       if (suggested.length >= 3) setUsername(suggested);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
 
-  // Debounced availability check
   useEffect(() => {
-    const isRegistering = mode === 'register' || (authType === 'otp' && otpSent && !emailExists);
     if (!isRegistering || !username) { setUsernameStatus(null); return; }
     clearTimeout(debounceRef.current);
     setUsernameStatus('checking');
@@ -50,141 +48,83 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     return () => clearTimeout(debounceRef.current);
   }, [username, mode, authType, otpSent, emailExists]);
 
-  // Handle Google Login Response
   const handleGoogleCredentialResponse = async (response) => {
-    const credential = response.credential;
     setLoading(true);
     setError('');
     try {
-      const r = await api('google_auth', { credential });
-      if (r.ok) {
-        onLoginSuccess(r.user);
-      } else {
-        setError(r.error || 'Google Authentication failed');
-      }
-    } catch (err) {
+      const r = await api('google_auth', { credential: response.credential });
+      if (r.ok) onLoginSuccess(r.user);
+      else setError(r.error || 'Google Authentication failed');
+    } catch {
       setError('Failed to connect to server');
     } finally {
       setLoading(false);
     }
   };
 
-  // Google SDK Init
   useEffect(() => {
     if (!googleClientId) return;
-
     const initGoogle = () => {
       if (window.google?.accounts?.id) {
-        window.google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: handleGoogleCredentialResponse,
-        });
+        window.google.accounts.id.initialize({ client_id: googleClientId, callback: handleGoogleCredentialResponse });
         const btnEl = document.getElementById('google-signin-btn');
         if (btnEl) {
-          window.google.accounts.id.renderButton(btnEl, {
-            theme: 'filled_black',
-            size: 'large',
-            width: btnEl.offsetWidth || 290,
-          });
+          window.google.accounts.id.renderButton(btnEl, { theme: 'outline', size: 'large', width: btnEl.offsetWidth || 330 });
         }
       } else {
         setTimeout(initGoogle, 100);
       }
     };
-
     initGoogle();
   }, [googleClientId, mode, authType]);
 
   const handleSendOtp = async () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setError('Please enter a valid email address');
-      return;
+      setError('Please enter a valid email address'); return;
     }
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       const r = await api('send_otp', { email });
-      if (r.ok) {
-        setOtpSent(true);
-        setEmailExists(r.exists);
-      } else {
-        setError(r.error || 'Failed to send OTP. Please try again.');
-      }
-    } catch (err) {
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
+      if (r.ok) { setOtpSent(true); setEmailExists(r.exists); }
+      else setError(r.error || 'Failed to send OTP. Please try again.');
+    } catch { setError('Failed to connect to server'); }
+    finally { setLoading(false); }
   };
 
   const handleVerifyOtp = async () => {
-    if (!otp?.trim()) {
-      setError('Verification code is required');
-      return;
-    }
-    setLoading(true);
-    setError('');
+    if (!otp?.trim()) { setError('Verification code is required'); return; }
+    setLoading(true); setError('');
     try {
       const r = await api('verify_otp', { email, otp });
       if (r.ok) {
-        if (r.exists) {
-          onLoginSuccess(r.user);
-        } else {
-          // Verification succeeded but user is new
-          setEmailExists(false);
-        }
-      } else {
-        setError(r.error || 'Invalid or expired code');
-      }
-    } catch (err) {
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
+        if (r.exists) onLoginSuccess(r.user);
+        else setEmailExists(false);
+      } else setError(r.error || 'Invalid or expired code');
+    } catch { setError('Failed to connect to server'); }
+    finally { setLoading(false); }
   };
 
   const handleRegisterOtp = async () => {
-    if (!name?.trim() || !username?.trim()) {
-      setError('Name and Username are required');
-      return;
-    }
-    if (usernameStatus !== 'available') {
-      setError('Please choose a valid, available username');
-      return;
-    }
-    if (!consentGiven) {
-      setError('You must agree to the Terms of Service and Privacy Policy');
-      return;
-    }
-    setLoading(true);
-    setError('');
+    if (!name?.trim() || !username?.trim()) { setError('Name and Username are required'); return; }
+    if (usernameStatus !== 'available') { setError('Please choose a valid, available username'); return; }
+    if (!consentGiven) { setError('You must agree to the Terms of Service and Privacy Policy'); return; }
+    setLoading(true); setError('');
     try {
       const r = await api('register_otp', { email, name, username, otp, consentGiven: true });
-      if (r.ok) {
-        onLoginSuccess(r.user);
-      } else {
-        setError(r.error || 'Registration failed');
-      }
-    } catch (err) {
-      setError('Failed to connect to server');
-    } finally {
-      setLoading(false);
-    }
+      if (r.ok) onLoginSuccess(r.user);
+      else setError(r.error || 'Registration failed');
+    } catch { setError('Failed to connect to server'); }
+    finally { setLoading(false); }
   };
 
   const doSubmit = async () => {
     setError('');
     if (authType === 'otp') {
-      if (!otpSent) {
-        await handleSendOtp();
-      } else if (emailExists) {
-        await handleVerifyOtp();
-      } else {
-        await handleRegisterOtp();
-      }
+      if (!otpSent) await handleSendOtp();
+      else if (emailExists) await handleVerifyOtp();
+      else await handleRegisterOtp();
       return;
     }
-
     if (mode === 'register') {
       if (usernameStatus !== 'available') { setError('Please choose a valid, available username'); return; }
       if (!consentGiven) { setError('You must agree to the Terms of Service and Privacy Policy'); return; }
@@ -193,54 +133,43 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     try {
       const body = mode === 'register' ? { name, email, password, username, consentGiven: true } : { email, password };
       const r = await api(mode, body);
-      if (r.ok) {
-        onLoginSuccess(r.user);
-      } else {
-        setError(r.error || 'Something went wrong. Please try again.');
-      }
-    } finally {
-      setLoading(false);
-    }
+      if (r.ok) onLoginSuccess(r.user);
+      else setError(r.error || 'Something went wrong. Please try again.');
+    } finally { setLoading(false); }
   };
 
   const switchMode = (next) => {
-    setMode(next);
-    setError('');
-    setUsernameStatus(null);
-    setShowForgot(false);
-    setOtpSent(false);
-    setOtp('');
-    setConsentGiven(false);
+    setMode(next); setError(''); setUsernameStatus(null);
+    setShowForgot(false); setOtpSent(false); setOtp(''); setConsentGiven(false);
   };
 
   const switchAuthType = (next) => {
-    setAuthType(next);
-    setError('');
-    setUsernameStatus(null);
-    setShowForgot(false);
-    setOtpSent(false);
-    setOtp('');
-    setConsentGiven(false);
+    setAuthType(next); setError(''); setUsernameStatus(null);
+    setShowForgot(false); setOtpSent(false); setOtp(''); setConsentGiven(false);
   };
 
   const unHint = (() => {
-    const isRegistering = mode === 'register' || (authType === 'otp' && otpSent && !emailExists);
     if (!username || !isRegistering) return null;
-    if (usernameStatus === 'checking') return { color: 'var(--muted)', text: 'Checking…' };
+    if (usernameStatus === 'checking') return { color: 'rgba(255,255,255,0.3)', text: 'Checking…' };
     if (usernameStatus === 'available') return { color: '#10b981', text: '✓ @' + username + ' is available' };
     if (usernameStatus === 'taken') return { color: '#ef4444', text: '✕ @' + username + ' is taken' };
     if (typeof usernameStatus === 'string') return { color: '#ef4444', text: usernameStatus };
     return null;
   })();
 
+  const getTitle = () => {
+    if (authType === 'otp') {
+      if (otpSent && !emailExists) return 'Almost there';
+      if (otpSent) return 'Check your inbox';
+      return 'Continue with email';
+    }
+    return mode === 'login' ? 'Welcome back' : 'Create account';
+  };
+
   const getSubtext = () => {
     if (authType === 'otp') {
-      if (otpSent) {
-        return emailExists 
-          ? 'Enter the verification code sent to your email.' 
-          : 'Complete your profile to sign up.';
-      }
-      return 'Sign in or register with a verification code.';
+      if (otpSent) return emailExists ? `We sent a 6-digit code to ${email}` : 'Complete your profile to finish signing up.';
+      return 'Enter your email to sign in or create an account.';
     }
     return mode === 'login' ? 'Sign in to your workspace.' : 'Get started with BrainJot.';
   };
@@ -249,227 +178,193 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     if (loading) return 'Please wait…';
     if (authType === 'otp') {
       if (!otpSent) return 'Send verification code';
-      return emailExists ? 'Verify & Sign in' : 'Verify & Register';
+      return emailExists ? 'Verify & Sign in' : 'Complete sign up';
     }
     return mode === 'login' ? 'Sign in' : 'Create account';
   };
 
   return (
     <div id="login-screen">
-      <div className="login-box">
-        <div className="login-year">BJ</div>
-        <div className="login-title">
-          {authType === 'otp' 
-            ? (otpSent && !emailExists ? 'Create your profile' : 'Verification')
-            : (mode === 'login' ? 'Welcome back' : 'Create your account')}
-        </div>
-        <div className="login-sub">
-          {getSubtext()}
-        </div>
+      {/* Looping video background */}
+      <video className="lv-bg" autoPlay loop muted playsInline>
+        <source src="/bg-video.mp4" type="video/mp4" />
+      </video>
+      <div className="lv-overlay" />
 
-        {/* Google SSO section */}
-        {googleClientId && !otpSent && (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '8px' }}>
-              <div id="google-signin-btn" style={{ width: '100%', minHeight: '40px' }} />
-            </div>
-            <p style={{ fontSize: '11px', color: 'var(--faint)', textAlign: 'center', marginBottom: '16px', lineHeight: '1.5' }}>
-              By continuing with Google, you agree to our{' '}
-              <button onClick={onOpenTerms} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '11px', padding: 0, textDecoration: 'underline' }}>Terms of Service</button>
-              {' '}and{' '}
-              <button onClick={onOpenPrivacy} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '11px', padding: 0, textDecoration: 'underline' }}>Privacy Policy</button>.
-            </p>
+      {/* Auth card */}
+      <div className="lv-card">
 
-            <div style={{ display: 'flex', alignItems: 'center', margin: '18px 0', color: 'var(--muted)', fontSize: '12px' }}>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }}></div>
-              <span style={{ padding: '0 10px', fontWeight: '500', opacity: 0.6 }}>or</span>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }}></div>
-            </div>
-          </>
-        )}
-
-        {/* Name (for standard Register OR new-user OTP signup) */}
-        {((mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists)) && (
-          <div className="field">
-            <label>Name</label>
-            <input
-              type="text"
-              placeholder="Your name"
-              value={name}
-              autoComplete="name"
-              onChange={e => setName(e.target.value)}
-            />
+        {/* Hero — lime panel with character illustration */}
+        <div className="lv-hero">
+          <img src="/illust.png" alt="" className="lv-illust" />
+          <div className="lv-brand">
+            <span className="lv-brand-name">BrainJot</span>
+            <span className="lv-brand-tag">Think together.</span>
           </div>
-        )}
-
-        {/* Email Field */}
-        <div className="field">
-          <label>Email</label>
-          <input
-            type="email"
-            placeholder="you@example.com"
-            value={email}
-            disabled={authType === 'otp' && otpSent}
-            autoComplete="email"
-            onChange={e => setEmail(e.target.value)}
-          />
         </div>
 
-        {/* Password Field (only for Password authentication) */}
-        {authType === 'password' && (
-          <div className="field">
-            <label>Password</label>
-            <input
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && mode !== 'register' && doSubmit()}
-            />
-          </div>
-        )}
+        {/* Form panel */}
+        <div className="lv-body">
+          <h2 className="lv-title">{getTitle()}</h2>
+          <p className="lv-sub">{getSubtext()}</p>
 
-        {/* Username Field (for standard Register OR new-user OTP signup) */}
-        {((mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists)) && (
-          <div className="field">
-            <label>Username</label>
-            <div style={{ position: 'relative' }}>
-              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontSize: '14px', fontWeight: '700', pointerEvents: 'none' }}>@</span>
+          {/* Google SSO */}
+          {googleClientId && !otpSent && (
+            <div className="lv-google-wrap">
+              <div id="google-signin-btn" style={{ display: 'flex', justifyContent: 'center', width: '100%' }} />
+              <p className="lv-google-notice">
+                By continuing with Google you agree to our{' '}
+                <button type="button" className="lv-link" onClick={onOpenTerms}>Terms</button>
+                {' & '}
+                <button type="button" className="lv-link" onClick={onOpenPrivacy}>Privacy Policy</button>
+              </p>
+            </div>
+          )}
+
+          {/* Divider */}
+          {googleClientId && !otpSent && (
+            <div className="lv-divider"><span>or</span></div>
+          )}
+
+          {/* Name — register only */}
+          {isRegistering && (
+            <div className="lv-field">
               <input
+                className="lv-input"
                 type="text"
-                placeholder="yourhandle"
-                value={username}
-                autoComplete="username"
-                style={{ paddingLeft: '26px' }}
-                onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))}
+                placeholder="Full name"
+                value={name}
+                autoComplete="name"
+                onChange={e => setName(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Email — hide when OTP sent (can't change it) */}
+          {!(authType === 'otp' && otpSent) && (
+            <div className="lv-field">
+              <input
+                className="lv-input"
+                type="email"
+                placeholder="Email address"
+                value={email}
+                autoComplete="email"
+                onChange={e => setEmail(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Password */}
+          {authType === 'password' && (
+            <div className="lv-field lv-field-pass">
+              <input
+                className="lv-input"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Password"
+                value={password}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && mode !== 'register' && doSubmit()}
+              />
+              <button type="button" className="lv-eye" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
+                {showPassword
+                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                }
+              </button>
+            </div>
+          )}
+
+          {/* Username — register only */}
+          {isRegistering && (
+            <div className="lv-field">
+              <div className="lv-field-at">
+                <span className="lv-at">@</span>
+                <input
+                  className="lv-input"
+                  type="text"
+                  placeholder="username"
+                  value={username}
+                  autoComplete="username"
+                  onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))}
+                  onKeyDown={e => e.key === 'Enter' && doSubmit()}
+                />
+              </div>
+              {unHint && <div className="lv-hint" style={{ color: unHint.color }}>{unHint.text}</div>}
+            </div>
+          )}
+
+          {/* OTP code */}
+          {authType === 'otp' && otpSent && (
+            <div className="lv-field">
+              <input
+                className="lv-input lv-otp"
+                type="text"
+                maxLength="6"
+                placeholder="· · · · · ·"
+                value={otp}
+                onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
                 onKeyDown={e => e.key === 'Enter' && doSubmit()}
               />
             </div>
-            {unHint && (
-              <div style={{ fontSize: '12px', color: unHint.color, marginTop: '4px', fontWeight: '600' }}>{unHint.text}</div>
-            )}
-            <div style={{ fontSize: '11px', color: 'var(--faint)', marginTop: '4px' }}>
-              This is your permanent unique handle in BrainJot — choose wisely.
-            </div>
-          </div>
-        )}
-
-        {/* OTP Verification Code Field */}
-        {authType === 'otp' && otpSent && (
-          <div className="field">
-            <label>Verification Code</label>
-            <input
-              type="text"
-              maxLength="6"
-              placeholder="123456"
-              value={otp}
-              onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
-              onKeyDown={e => e.key === 'Enter' && doSubmit()}
-              style={{ letterSpacing: '6px', textAlign: 'center', fontWeight: '700' }}
-            />
-          </div>
-        )}
-
-        {/* Consent checkbox — shown only during registration */}
-        {(mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists) ? (
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
-            <input
-              type="checkbox"
-              checked={consentGiven}
-              onChange={e => setConsentGiven(e.target.checked)}
-              style={{ marginTop: '2px', accentColor: 'var(--accent)', flexShrink: 0, width: '15px', height: '15px', cursor: 'pointer' }}
-            />
-            <span>
-              I agree to the{' '}
-              <button onClick={onOpenTerms} type="button" style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', padding: 0, fontWeight: '600', textDecoration: 'underline' }}>Terms of Service</button>
-              {' '}and{' '}
-              <button onClick={onOpenPrivacy} type="button" style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', padding: 0, fontWeight: '600', textDecoration: 'underline' }}>Privacy Policy</button>
-            </span>
-          </label>
-        ) : null}
-
-        <button className="btn-primary" onClick={doSubmit} disabled={loading}>
-          {getButtonText()}
-        </button>
-
-        {error && <div className="login-err" style={{ display: 'block' }}>{error}</div>}
-
-        {/* OTP Resend Options */}
-        {authType === 'otp' && otpSent && (
-          <div style={{ textAlign: 'center', marginTop: '14px' }}>
-            <button
-              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '13px', padding: 0 }}
-              onClick={handleSendOtp}
-              disabled={loading}
-            >
-              Resend verification code
-            </button>
-          </div>
-        )}
-
-        {/* Forgot Password Link */}
-        {mode === 'login' && authType === 'password' && (
-          <div style={{ textAlign: 'center', marginTop: '10px' }}>
-            {!showForgot ? (
-              <button
-                style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '13px', padding: 0, textDecoration: 'underline' }}
-                onClick={() => setShowForgot(true)}
-              >
-                Forgot password?
-              </button>
-            ) : (
-              <div style={{ fontSize: '13px', color: 'var(--muted)', background: 'var(--surface2)', borderRadius: '10px', padding: '10px 14px', lineHeight: '1.5' }}>
-                Password reset is not available via email yet. Contact your workspace admin or reach out to support.
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Authentication Method Selector */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', marginTop: '18px', borderTop: '0.5px solid var(--border)', paddingTop: '14px' }}>
-          {authType === 'password' ? (
-            <button
-              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '13px', padding: 0 }}
-              onClick={() => switchAuthType('otp')}
-            >
-              Sign in with Email OTP
-            </button>
-          ) : (
-            <button
-              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '13px', padding: 0 }}
-              onClick={() => switchAuthType('password')}
-            >
-              Sign in with password
-            </button>
           )}
 
-          {/* Login Mode Selector */}
-          {authType === 'password' && (
-            <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
-              {mode === 'login' ? (
-                <>
-                  No account?{' '}
-                  <button
-                    style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', padding: 0 }}
-                    onClick={() => switchMode('register')}
-                  >
-                    Sign up
-                  </button>
-                </>
-              ) : (
-                <>
-                  Already have an account?{' '}
-                  <button
-                    style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', padding: 0 }}
-                    onClick={() => switchMode('login')}
-                  >
-                    Sign in
-                  </button>
-                </>
-              )}
+          {/* Consent checkbox */}
+          {isRegistering && (
+            <label className="lv-consent">
+              <input
+                type="checkbox"
+                checked={consentGiven}
+                onChange={e => setConsentGiven(e.target.checked)}
+              />
+              <span>
+                I agree to the{' '}
+                <button type="button" className="lv-link" onClick={onOpenTerms}>Terms of Service</button>
+                {' '}and{' '}
+                <button type="button" className="lv-link" onClick={onOpenPrivacy}>Privacy Policy</button>
+              </span>
+            </label>
+          )}
+
+          {/* Error */}
+          {error && <div className="lv-err">{error}</div>}
+
+          {/* Submit button */}
+          <button className="lv-btn-primary" onClick={doSubmit} disabled={loading}>
+            {getButtonText()}
+          </button>
+
+          {/* OTP resend */}
+          {authType === 'otp' && otpSent && (
+            <div style={{ textAlign: 'center', marginTop: '10px' }}>
+              <button className="lv-link" onClick={handleSendOtp} disabled={loading}>Resend code</button>
             </div>
           )}
+
+          {/* Forgot password */}
+          {mode === 'login' && authType === 'password' && (
+            <div style={{ textAlign: 'center', marginTop: '8px' }}>
+              {!showForgot
+                ? <button className="lv-link lv-link-muted" onClick={() => setShowForgot(true)}>Forgot password?</button>
+                : <p className="lv-forgot-msg">Contact your workspace admin or reach out to support.</p>
+              }
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="lv-footer">
+            <button className="lv-footer-link" onClick={() => switchAuthType(authType === 'password' ? 'otp' : 'password')}>
+              {authType === 'password' ? 'Use Email OTP instead' : 'Use password instead'}
+            </button>
+            {authType === 'password' && (
+              <span className="lv-footer-switch">
+                {mode === 'login'
+                  ? <>No account?{' '}<button className="lv-link" onClick={() => switchMode('register')}>Sign up</button></>
+                  : <>Have an account?{' '}<button className="lv-link" onClick={() => switchMode('login')}>Sign in</button></>
+                }
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
