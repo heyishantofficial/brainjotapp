@@ -420,4 +420,38 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+// ── Sentry issues ──
+router.get('/sentry', async (req, res) => {
+  const { SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT } = process.env;
+  if (!SENTRY_AUTH_TOKEN || !SENTRY_ORG || !SENTRY_PROJECT) {
+    return res.json({ configured: false, issues: [] });
+  }
+  try {
+    const url = `https://sentry.io/api/0/projects/${encodeURIComponent(SENTRY_ORG)}/${encodeURIComponent(SENTRY_PROJECT)}/issues/?limit=25&query=is%3Aunresolved&sort=date`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${SENTRY_AUTH_TOKEN}` } });
+    if (!r.ok) {
+      console.error('[admin/sentry] API error:', r.status);
+      return res.json({ configured: false, issues: [], error: 'Sentry API returned ' + r.status });
+    }
+    const raw = await r.json();
+    res.json({
+      configured: true,
+      issues: raw.map(i => ({
+        id:        i.id,
+        title:     i.title,
+        culprit:   i.culprit,
+        count:     i.count,
+        userCount: i.userCount,
+        firstSeen: i.firstSeen,
+        lastSeen:  i.lastSeen,
+        level:     i.level,
+        permalink: i.permalink,
+      })),
+    });
+  } catch (err) {
+    console.error('[admin/sentry]', err);
+    res.status(500).json({ configured: true, issues: [], error: err.message });
+  }
+});
+
 module.exports = router;

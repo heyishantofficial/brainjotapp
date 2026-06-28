@@ -746,6 +746,112 @@ function SystemTab() {
   );
 }
 
+// ── Errors tab (Sentry) ───────────────────────────────────────────────────────
+
+const LEVEL_COLOR = { fatal: '#ff4444', error: T.red, warning: T.amber, info: T.blue, debug: T.muted };
+
+function ErrorsTab() {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    adminFetch('/sentry').then(d => { setData(d); setLoading(false); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <Loading height={300} />;
+
+  if (!data?.configured) {
+    return (
+      <Card>
+        <CardTitle>Sentry Error Tracking</CardTitle>
+        <div style={{ fontSize: '13px', color: T.sub, lineHeight: '1.7' }}>
+          To enable this panel, add three environment variables to your Vercel backend project:
+        </div>
+        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {[
+            ['SENTRY_AUTH_TOKEN', 'Settings → Auth Tokens → Create token (scopes: project:read, event:read)'],
+            ['SENTRY_ORG',        'Your organisation slug — visible in the Sentry URL: sentry.io/organizations/{slug}/'],
+            ['SENTRY_PROJECT',    'Your project slug — visible in Settings → Projects → {project name}'],
+          ].map(([k, hint]) => (
+            <div key={k} style={{ padding: '10px 14px', borderRadius: '10px', background: T.surface, border: `1px solid ${T.border}` }}>
+              <div style={{ fontFamily: 'monospace', fontSize: '12px', color: T.accent, fontWeight: '700' }}>{k}</div>
+              <div style={{ fontSize: '11px', color: T.muted, marginTop: '3px' }}>{hint}</div>
+            </div>
+          ))}
+        </div>
+        {data?.error && <div style={{ marginTop: '12px', fontSize: '12px', color: T.red }}>API error: {data.error}</div>}
+      </Card>
+    );
+  }
+
+  const now = Date.now();
+  const DAY = 24 * 60 * 60 * 1000;
+  const activeLast24h = data.issues.filter(i => now - new Date(i.lastSeen).getTime() < DAY).length;
+  const newToday      = data.issues.filter(i => now - new Date(i.firstSeen).getTime() < DAY).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+        <StatCard label="Unresolved Errors" value={data.issues.length} color={T.red}   icon="🚨" sub="open issues in Sentry" />
+        <StatCard label="Active Last 24h"   value={activeLast24h}      color={T.amber} icon="⏰" sub="errors seen recently" />
+        <StatCard label="New Today"         value={newToday}           color={T.blue}  icon="🆕" sub="first seen today" />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={load} style={{ ...BTN, fontSize: '12px', fontWeight: '700', padding: '6px 14px', borderRadius: '9px', border: `1px solid ${T.border2}`, color: T.sub }}>↺ Refresh</button>
+      </div>
+
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, fontSize: '11px', fontWeight: '800', color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+          Unresolved Issues — Latest First
+        </div>
+        {data.issues.length === 0 && (
+          <div style={{ padding: '48px', textAlign: 'center', fontSize: '14px', color: T.green }}>
+            No unresolved errors
+          </div>
+        )}
+        {data.issues.map((issue, idx) => (
+          <div key={issue.id} style={{ padding: '14px 20px', borderBottom: idx < data.issues.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px', flexWrap: 'wrap' }}>
+                  <Tag color={LEVEL_COLOR[issue.level] || T.muted}>{issue.level?.toUpperCase()}</Tag>
+                  <span style={{ fontSize: '13px', fontWeight: '700', wordBreak: 'break-word' }}>{issue.title}</span>
+                </div>
+                {issue.culprit && (
+                  <div style={{ fontSize: '11px', color: T.muted, fontFamily: 'monospace', marginBottom: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {issue.culprit}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '11px', color: T.muted }}>First: {timeAgo(issue.firstSeen)}</span>
+                  <span style={{ fontSize: '11px', color: T.muted }}>Last: {timeAgo(issue.lastSeen)}</span>
+                  <span style={{ fontSize: '11px', color: T.amber, fontWeight: '700' }}>×{issue.count} events</span>
+                  {issue.userCount > 0 && (
+                    <span style={{ fontSize: '11px', color: T.red, fontWeight: '700' }}>
+                      {issue.userCount} user{issue.userCount !== 1 ? 's' : ''} affected
+                    </span>
+                  )}
+                </div>
+              </div>
+              <a
+                href={issue.permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: '11px', fontWeight: '700', padding: '5px 10px', borderRadius: '8px', border: `1px solid ${T.border2}`, color: T.sub, textDecoration: 'none', flexShrink: 0, whiteSpace: 'nowrap' }}
+              >
+                View ↗
+              </a>
+            </div>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -754,6 +860,7 @@ const TABS = [
   { key: 'Sessions',  icon: '🟢' },
   { key: 'Feedback',  icon: '💬' },
   { key: 'System',    icon: '⚙️' },
+  { key: 'Errors',    icon: '🚨' },
 ];
 
 export default function AdminView({ currentUser, onLogout }) {
@@ -798,6 +905,7 @@ export default function AdminView({ currentUser, onLogout }) {
         {tab === 'Sessions' && <SessionsTab onConfirm={openConfirm} />}
         {tab === 'Feedback' && <FeedbackTab onConfirm={openConfirm} />}
         {tab === 'System'   && <SystemTab />}
+        {tab === 'Errors'   && <ErrorsTab />}
       </div>
 
       {confirm && (
