@@ -57,7 +57,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       }
     }, 500);
     return () => clearTimeout(debounceRef.current);
-  }, [username, mode, authType, otpSent, emailExists]);
+  }, [username, authType, otpSent, emailExists]);
 
   const handleGoogleCredentialResponse = async (response) => {
     setLoading(true); setError('');
@@ -81,7 +81,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       } else setTimeout(initGoogle, 100);
     };
     initGoogle();
-  }, [googleClientId, mode, authType]);
+  }, [googleClientId, authType]);
 
   const handleSendOtp = async () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
@@ -328,7 +328,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
             )}
 
             {/* Forgot password */}
-            {mode === 'login' && authType === 'password' && (
+            {authType === 'password' && (
               <div style={{ textAlign: 'center' }}>
                 {!showForgot
                   ? <button className="lv-btn-link" onClick={() => setShowForgot(true)}>Forgot password?</button>
