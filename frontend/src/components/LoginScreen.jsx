@@ -194,17 +194,9 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       {/* Auth card */}
       <div className="lv-card">
 
-        {/* Hero — lime panel with character illustration */}
-        <div className="lv-hero">
-          <img src="/illust.png" alt="" className="lv-illust" />
-          <div className="lv-brand">
-            <span className="lv-brand-name">BrainJot</span>
-            <span className="lv-brand-tag">Think together.</span>
-          </div>
-        </div>
-
         {/* Form panel */}
         <div className="lv-body">
+          <div className="lv-wordmark">BrainJot</div>
           <h2 className="lv-title">{getTitle()}</h2>
           <p className="lv-sub">{getSubtext()}</p>
 

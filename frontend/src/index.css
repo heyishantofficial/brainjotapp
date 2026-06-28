@@ -50,12 +50,8 @@ button,[role="button"],input,label,select,a{touch-action:manipulation}
 .lv-bg{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.5}
 .lv-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1}
 .lv-card{position:relative;z-index:2;width:100%;max-width:390px;border-radius:28px;overflow:hidden;box-shadow:0 40px 100px rgba(0,0,0,0.7),0 0 0 0.5px rgba(255,255,255,0.07)}
-.lv-hero{background:#D4FF32;padding:28px 28px 18px;display:flex;flex-direction:column;align-items:center;gap:10px}
-.lv-illust{width:160px;height:160px;object-fit:contain;mix-blend-mode:multiply}
-.lv-brand{display:flex;flex-direction:column;align-items:center;gap:1px}
-.lv-brand-name{font-family:var(--font-head);font-size:20px;font-weight:800;color:#0D0D0F;letter-spacing:-0.4px}
-.lv-brand-tag{font-size:12px;color:rgba(0,0,0,0.45);font-weight:500}
-.lv-body{background:#0d0d0d;padding:26px 26px 22px}
+.lv-body{background:rgba(10,10,10,0.92);padding:32px 28px 26px;backdrop-filter:blur(12px)}
+.lv-wordmark{font-family:var(--font-head);font-size:17px;font-weight:800;color:#D4FF32;letter-spacing:-0.3px;margin-bottom:18px}
 .lv-title{font-family:var(--font-head);font-size:22px;font-weight:700;color:#fff;margin-bottom:3px;letter-spacing:-0.3px}
 .lv-sub{font-size:13px;color:rgba(255,255,255,0.38);margin-bottom:18px;line-height:1.45}
 .lv-google-wrap{margin-bottom:4px}
