@@ -3,6 +3,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const disposableDomains = new Set(require('disposable-email-domains'));
 const bcrypt = require('bcrypt');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
@@ -827,6 +829,22 @@ router.post('/', apiLimiter, async (req, res, next) => {
         }
         
         const cleanEmail = email.toLowerCase().trim();
+        const emailDomain = cleanEmail.split('@')[1];
+
+        // Block known disposable/temporary email domains
+        if (disposableDomains.has(emailDomain)) {
+          return res.status(400).json({ error: 'Temporary or disposable email addresses are not allowed. Please use a real email address.' });
+        }
+
+        // Verify the domain has live mail servers (MX records)
+        try {
+          const mx = await dns.resolveMx(emailDomain);
+          if (!mx || mx.length === 0) {
+            return res.status(400).json({ error: 'This email domain does not appear to accept mail. Please use a valid email address.' });
+          }
+        } catch {
+          return res.status(400).json({ error: 'Could not verify this email domain. Please check your email and try again.' });
+        }
 
         // Enforce 60-second resend cooldown per email to prevent OTP flooding
         const existingOtp = await Otp.findOne({ email: cleanEmail });
