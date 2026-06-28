@@ -10,6 +10,10 @@ const userSchema = new mongoose.Schema({
   avatarUrl: { type: String, default: '' },
   storageUsedBytes: { type: Number, default: 0 }, // running total of uploaded file bytes
   createdAt: { type: Date, default: Date.now },
+  consentGiven: { type: Boolean, default: false },
+  consentAt: { type: Date },
+  consentVersion: { type: String, default: '' },
+  consentIp: { type: String, default: '' },
 });
 
 module.exports = mongoose.model('User', userSchema);

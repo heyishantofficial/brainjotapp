@@ -28,6 +28,8 @@ const AdminView        = React.lazy(() => import('./views/AdminView'));
 const InviteLandingView = React.lazy(() => import('./views/InviteLandingView'));
 const WordpadModal     = React.lazy(() => import('./components/WordpadModal'));
 const FeedbackPanel    = React.lazy(() => import('./components/FeedbackPanel'));
+const PrivacyPolicyPage = React.lazy(() => import('./components/PrivacyPolicyPage'));
+const TermsPage         = React.lazy(() => import('./components/TermsPage'));
 
 const configuredGoogleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim() || null;
 
@@ -92,6 +94,12 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   const [googleClientId, setGoogleClientId] = useState(configuredGoogleClientId);
+  const [staticPage, setStaticPage] = useState(() => {
+    const p = window.location.pathname;
+    if (p === '/privacy') return 'privacy';
+    if (p === '/terms') return 'terms';
+    return null;
+  });
   
   // ── Call feature state ────────────────────────────────────────────
   const [livekitEnabled, setLivekitEnabled] = useState(false);
@@ -412,6 +420,22 @@ export default function App() {
 
   if (loading) return <Spinner />;
 
+  if (staticPage === 'privacy') {
+    return (
+      <React.Suspense fallback={<Spinner />}>
+        <PrivacyPolicyPage onBack={() => { window.history.pushState({}, '', '/'); setStaticPage(null); }} />
+      </React.Suspense>
+    );
+  }
+
+  if (staticPage === 'terms') {
+    return (
+      <React.Suspense fallback={<Spinner />}>
+        <TermsPage onBack={() => { window.history.pushState({}, '', '/'); setStaticPage(null); }} />
+      </React.Suspense>
+    );
+  }
+
   if (inviteToken && !loggedIn) {
     return <LoginScreen googleClientId={googleClientId} onLoginSuccess={(user) => {
       setLoggedIn(true);
@@ -419,7 +443,7 @@ export default function App() {
       loadData();
       loadNotifications();
       requestNotificationPermission();
-    }} />;
+    }} onOpenPrivacy={() => setStaticPage('privacy')} onOpenTerms={() => setStaticPage('terms')} />;
   }
 
   if (inviteToken && loggedIn) {
@@ -437,7 +461,7 @@ export default function App() {
       loadData();
       loadNotifications();
       requestNotificationPermission();
-    }} />;
+    }} onOpenPrivacy={() => setStaticPage('privacy')} onOpenTerms={() => setStaticPage('terms')} />;
   }
 
   // Admin route gate — navigating to /admin shows the panel only for verified superadmins.

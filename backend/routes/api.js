@@ -605,9 +605,12 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'register') {
     return authLimiter(req, res, async () => {
       try {
-        const { email, password, name, username } = req.body;
+        const { email, password, name, username, consentGiven } = req.body;
         if (!email?.trim() || !password || !name?.trim()) {
           return res.status(400).json({ error: 'Name, email and password are required' });
+        }
+        if (!consentGiven) {
+          return res.status(400).json({ error: 'You must agree to the Terms of Service and Privacy Policy to create an account' });
         }
         if (password.length < 8) {
           return res.status(400).json({ error: 'Password must be at least 8 characters' });
@@ -636,7 +639,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
         const userId = 'user_' + uid();
         const role = ADMIN_EMAILS.includes(email.toLowerCase().trim()) ? 'superadmin' : 'user';
-        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), username: cleanUsername, passwordHash, role });
+        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), username: cleanUsername, passwordHash, role, consentGiven: true, consentAt: new Date(), consentVersion: '1.0', consentIp: req.ip });
         await seedDefaultData(userId);
         await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = userId;
@@ -764,6 +767,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
             passwordHash: 'GOOGLE_OAUTH_USER',
             role,
             avatarUrl: picture || '',
+            consentGiven: true,
+            consentAt: new Date(),
+            consentVersion: '1.0',
+            consentIp: req.ip,
           });
           await seedDefaultData(newUserId);
         } else {
@@ -924,9 +931,12 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'register_otp') {
     return authLimiter(req, res, async () => {
       try {
-        const { email, name, username, otp } = req.body;
+        const { email, name, username, otp, consentGiven } = req.body;
         if (!email || !name || !username || !otp) {
           return res.status(400).json({ error: 'All fields are required' });
+        }
+        if (!consentGiven) {
+          return res.status(400).json({ error: 'You must agree to the Terms of Service and Privacy Policy to create an account' });
         }
         
         const cleanEmail = email.toLowerCase().trim();
@@ -961,6 +971,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
           passwordHash: 'OTP_AUTH_USER',
           role,
           avatarUrl: '',
+          consentGiven: true,
+          consentAt: new Date(),
+          consentVersion: '1.0',
+          consentIp: req.ip,
         });
         
         await seedDefaultData(newUserId);

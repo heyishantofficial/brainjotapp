@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
-export default function LoginScreen({ onLoginSuccess, googleClientId }) {
+export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPrivacy, onOpenTerms }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [authType, setAuthType] = useState('password'); // 'password' | 'otp'
   
@@ -17,6 +17,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
   const [emailExists, setEmailExists] = useState(false);
   
   const [usernameStatus, setUsernameStatus] = useState(null); // null | 'checking' | 'available' | 'taken' | string (error)
+  const [consentGiven, setConsentGiven] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
@@ -151,10 +152,14 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
       setError('Please choose a valid, available username');
       return;
     }
+    if (!consentGiven) {
+      setError('You must agree to the Terms of Service and Privacy Policy');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const r = await api('register_otp', { email, name, username, otp });
+      const r = await api('register_otp', { email, name, username, otp, consentGiven: true });
       if (r.ok) {
         onLoginSuccess(r.user);
       } else {
@@ -182,10 +187,11 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
 
     if (mode === 'register') {
       if (usernameStatus !== 'available') { setError('Please choose a valid, available username'); return; }
+      if (!consentGiven) { setError('You must agree to the Terms of Service and Privacy Policy'); return; }
     }
     setLoading(true);
     try {
-      const body = mode === 'register' ? { name, email, password, username } : { email, password };
+      const body = mode === 'register' ? { name, email, password, username, consentGiven: true } : { email, password };
       const r = await api(mode, body);
       if (r.ok) {
         onLoginSuccess(r.user);
@@ -197,13 +203,14 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
     }
   };
 
-  const switchMode = (next) => { 
-    setMode(next); 
-    setError(''); 
-    setUsernameStatus(null); 
-    setShowForgot(false); 
+  const switchMode = (next) => {
+    setMode(next);
+    setError('');
+    setUsernameStatus(null);
+    setShowForgot(false);
     setOtpSent(false);
     setOtp('');
+    setConsentGiven(false);
   };
 
   const switchAuthType = (next) => {
@@ -213,6 +220,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
     setShowForgot(false);
     setOtpSent(false);
     setOtp('');
+    setConsentGiven(false);
   };
 
   const unHint = (() => {
@@ -262,10 +270,16 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
         {/* Google SSO section */}
         {googleClientId && !otpSent && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '8px' }}>
               <div id="google-signin-btn" style={{ width: '100%', minHeight: '40px' }} />
             </div>
-            
+            <p style={{ fontSize: '11px', color: 'var(--faint)', textAlign: 'center', marginBottom: '16px', lineHeight: '1.5' }}>
+              By continuing with Google, you agree to our{' '}
+              <button onClick={onOpenTerms} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '11px', padding: 0, textDecoration: 'underline' }}>Terms of Service</button>
+              {' '}and{' '}
+              <button onClick={onOpenPrivacy} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '11px', padding: 0, textDecoration: 'underline' }}>Privacy Policy</button>.
+            </p>
+
             <div style={{ display: 'flex', alignItems: 'center', margin: '18px 0', color: 'var(--muted)', fontSize: '12px' }}>
               <div style={{ flex: 1, height: '1px', background: 'var(--border)' }}></div>
               <span style={{ padding: '0 10px', fontWeight: '500', opacity: 0.6 }}>or</span>
@@ -356,6 +370,24 @@ export default function LoginScreen({ onLoginSuccess, googleClientId }) {
             />
           </div>
         )}
+
+        {/* Consent checkbox — shown only during registration */}
+        {(mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists) ? (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
+            <input
+              type="checkbox"
+              checked={consentGiven}
+              onChange={e => setConsentGiven(e.target.checked)}
+              style={{ marginTop: '2px', accentColor: 'var(--accent)', flexShrink: 0, width: '15px', height: '15px', cursor: 'pointer' }}
+            />
+            <span>
+              I agree to the{' '}
+              <button onClick={onOpenTerms} type="button" style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', padding: 0, fontWeight: '600', textDecoration: 'underline' }}>Terms of Service</button>
+              {' '}and{' '}
+              <button onClick={onOpenPrivacy} type="button" style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: '13px', padding: 0, fontWeight: '600', textDecoration: 'underline' }}>Privacy Policy</button>
+            </span>
+          </label>
+        ) : null}
 
         <button className="btn-primary" onClick={doSubmit} disabled={loading}>
           {getButtonText()}
