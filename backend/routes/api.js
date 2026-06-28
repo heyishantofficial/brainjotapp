@@ -459,8 +459,9 @@ router.get('/', apiLimiter, async (req, res) => {
     const q = (req.query.q || '').replace(/^@/, '').toLowerCase().trim();
     if (q.length < 2) { res.json({ users: [] }); return; }
     const safeQ = q.replace(/[^a-z0-9_]/g, '');
+    // C-4: do not expose the internal user id — username is the public handle used for invites.
     const users = await User.find({ username: { $regex: '^' + safeQ }, id: { $ne: userId } })
-      .select('id name username avatarUrl -_id').limit(8).lean();
+      .select('name username avatarUrl -_id').limit(8).lean();
     res.json({ users });
     return;
   }
@@ -647,66 +648,6 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── register (disabled — all signups must go through register_otp) ──
   if (action === 'register') {
     return res.status(410).json({ error: 'This endpoint is no longer available. Please sign up using the email verification flow.' });
-  }
-
-  // ── register_DISABLED (dead code kept for reference — removed from routing) ──
-  if (action === '__register_disabled') {
-    return authLimiter(req, res, async () => {
-      try {
-        const { email, password, name, username, consentGiven, otp } = req.body;
-        if (!email?.trim() || !password || !name?.trim()) {
-          return res.status(400).json({ error: 'Name, email and password are required' });
-        }
-        if (!consentGiven) {
-          return res.status(400).json({ error: 'You must agree to the Terms of Service and Privacy Policy to create an account' });
-        }
-        // Require email verification for all new accounts — no unverified signups
-        if (!otp?.trim()) {
-          return res.status(400).json({ error: 'Email verification is required to create an account. Please use the email code sign-up option.' });
-        }
-        const otpCheck = await Otp.findOne({ email: email.toLowerCase().trim(), code: otp.trim() });
-        if (!otpCheck || otpCheck.expiresAt < new Date()) {
-          return res.status(400).json({ error: 'Invalid or expired verification code. Please request a new one.' });
-        }
-        await Otp.deleteOne({ _id: otpCheck._id });
-        if (password.length < 8) {
-          return res.status(400).json({ error: 'Password must be at least 8 characters' });
-        }
-        if (password.length > 256) {
-          return res.status(400).json({ error: 'Password too long (max 256 characters)' });
-        }
-        if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
-          return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
-        }
-        if (!username?.trim()) {
-          return res.status(400).json({ error: 'Username is required' });
-        }
-        const cleanUsername = username.toLowerCase().trim();
-        if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-z0-9_]+$/.test(cleanUsername)) {
-          return res.status(400).json({ error: 'Username must be 3-20 chars, letters/numbers/underscores only' });
-        }
-        const existing = await User.findOne({ email: email.toLowerCase().trim() });
-        if (existing) {
-          return res.status(409).json({ error: 'An account with this email already exists' });
-        }
-        const takenUsername = await User.findOne({ username: cleanUsername });
-        if (takenUsername) {
-          return res.status(409).json({ error: 'Username already taken' });
-        }
-        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-        const userId = 'user_' + uid();
-        const role = ADMIN_EMAILS.includes(email.toLowerCase().trim()) ? 'superadmin' : 'user';
-        const user = await User.create({ id: userId, email: email.toLowerCase().trim(), name: name.trim(), username: cleanUsername, passwordHash, role, consentGiven: true, consentAt: new Date(), consentVersion: '1.0', consentIp: req.ip });
-        await seedDefaultData(userId);
-        await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
-        req.session.userId = userId;
-        req.session.userRole = role;
-        logger.info({ userId, ip: req.ip, role }, '[auth] register_success');
-        res.json({ ok: true, user: { id: userId, name: user.name, email: user.email, username: user.username, role, avatarUrl: '' } });
-      } catch (err) {
-        next(err);
-      }
-    });
   }
 
   // ── login ──
@@ -1250,12 +1191,35 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const taken = await User.findOne({ email: cleanNew, id: { $ne: userId } });
     if (taken) { res.status(409).json({ error: 'That email is already in use' }); return; }
     const otpDoc = await Otp.findOne({ email: cleanNew });
-    if (!otpDoc || otpDoc.expiresAt < new Date() || !verifyOtp(otp.trim(), otpDoc.codeHash)) {
+    if (!otpDoc || otpDoc.expiresAt < new Date()) {
       res.status(400).json({ error: 'Invalid or expired verification code' }); return;
     }
+    // C-2: cap brute-force guesses, consistent with the other OTP flows
+    const MAX_OTP_ATTEMPTS = 5;
+    if ((otpDoc.attempts || 0) >= MAX_OTP_ATTEMPTS) {
+      await Otp.deleteOne({ _id: otpDoc._id });
+      res.status(400).json({ error: 'Too many incorrect attempts. Request a new code.' }); return;
+    }
+    if (!verifyOtp(otp.trim(), otpDoc.codeHash)) {
+      otpDoc.attempts = (otpDoc.attempts || 0) + 1;
+      await otpDoc.save();
+      const remaining = MAX_OTP_ATTEMPTS - otpDoc.attempts;
+      res.status(400).json({ error: `Invalid code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.` }); return;
+    }
+    // Capture the old address before overwriting so we can warn it of the change
+    const before = await User.findOne({ id: userId }).select('email -_id').lean();
     await Otp.deleteOne({ _id: otpDoc._id });
     await User.updateOne({ id: userId }, { email: cleanNew });
     logger.info({ userId, newEmail: cleanNew, ip: req.ip }, '[auth] email_changed');
+    // C-2: fire-and-forget security notice to the previous email (account-takeover safety net).
+    // Never blocks or fails the response.
+    if (resend && before?.email && before.email !== cleanNew) {
+      resend.emails.send({
+        from: FROM_EMAIL, to: before.email,
+        subject: 'Your BrainJot email address was changed',
+        html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0a0a0a;color:#f5f5f5;border-radius:16px"><h1 style="font-size:22px;font-weight:800;margin:0 0 16px">Email address changed</h1><p style="font-size:15px;line-height:1.6;margin:0 0 16px">The email on your BrainJot account was just changed to <strong>${cleanNew}</strong>.</p><p style="font-size:15px;line-height:1.6;margin:0">If this wasn't you, your account may be compromised — contact support immediately.</p></div>`,
+      }).catch((err) => logger.warn({ err: err?.message, userId }, '[auth] email_change notice failed'));
+    }
     res.json({ ok: true, email: cleanNew });
     return;
   }
@@ -1284,6 +1248,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!currentPassword || !newPassword) { res.status(400).json({ error: 'Both passwords required' }); return; }
     if (newPassword.length < 8) { res.status(400).json({ error: 'New password must be at least 8 characters' }); return; }
     if (newPassword.length > 256) { res.status(400).json({ error: 'Password too long (max 256 characters)' }); return; }
+    // C-5: match the complexity rule enforced at signup and password reset
+    if (!/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) { res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' }); return; }
     const user = await User.findOne({ id: userId });
     if (!user) { res.status(404).json({ error: 'User not found' }); return; }
     // OTP and Google OAuth accounts have no password — give a clear error instead of a silent failure

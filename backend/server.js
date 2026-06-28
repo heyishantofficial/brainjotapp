@@ -178,7 +178,11 @@ app.use((req, res, next) => {
   if (last && Date.now() - last > IDLE_TIMEOUT_MS) {
     return req.session.destroy(() => res.status(401).json({ error: 'Session expired due to inactivity. Please sign in again.' }));
   }
-  req.session.lastActivity = Date.now();
+  // L-1: throttle the touch — persist lastActivity at most once per minute so we
+  // don't trigger a MongoStore write on every single authenticated request.
+  if (!last || Date.now() - last > 60 * 1000) {
+    req.session.lastActivity = Date.now();
+  }
   next();
 });
 
@@ -432,6 +436,14 @@ async function boot() {
         .createIndex({ expireAt: 1 }, { expireAfterSeconds: 0, background: true });
     } catch (err) {
       logger.warn({ err }, '[startup] audit_log TTL index creation failed (non-fatal)');
+    }
+    // C-7: reap expired auth rate-limit docs so the collection doesn't grow unbounded
+    // and stale windows can't linger. TTL fires on resetTime (already in the past once expired).
+    try {
+      await mongoose.connection.db.collection('rate_limits_auth')
+        .createIndex({ resetTime: 1 }, { expireAfterSeconds: 0, background: true });
+    } catch (err) {
+      logger.warn({ err }, '[startup] rate_limits_auth TTL index creation failed (non-fatal)');
     }
   }).catch((err) => {
     logger.error({ err }, '[mongoose] initial connection failure');
