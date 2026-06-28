@@ -1,8 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
+const TAGLINES = [
+  "Your brain, but actually organized.",
+  "Your second brain. The first one's doing its best.",
+  "For overthinkers who never finish anything.",
+  "Because your brain has terrible storage.",
+  "Notes app for people who hate notes apps.",
+  "Where shower thoughts go to become actual things.",
+  "Finally closing those 47 browser tabs.",
+  "All your ideas. Now with 100% less forgetting.",
+];
+
 export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPrivacy, onOpenTerms }) {
   const [authType, setAuthType] = useState('password'); // 'password' | 'otp'
+  const [taglineIdx, setTaglineIdx] = useState(0);
+  const [taglineVisible, setTaglineVisible] = useState(true);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -20,6 +33,17 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const debounceRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTaglineVisible(false);
+      setTimeout(() => {
+        setTaglineIdx(i => (i + 1) % TAGLINES.length);
+        setTaglineVisible(true);
+      }, 600);
+    }, 3800);
+    return () => clearInterval(interval);
+  }, []);
 
   // Registration only happens via OTP — password mode is login-only
   const isRegistering = authType === 'otp' && otpSent && !emailExists;
@@ -178,7 +202,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
         {/* Brand */}
         <div className="lv-brand">
           <span className="lv-brand-name">BrainJot</span>
-          <span className="lv-brand-tag">The workspace where ideas connect.</span>
+          <span className="lv-brand-tag" style={{ opacity: taglineVisible ? 1 : 0, transition: 'opacity 0.6s ease' }}>{TAGLINES[taglineIdx]}</span>
         </div>
 
         <h2 className="lv-title">{getTitle()}</h2>
