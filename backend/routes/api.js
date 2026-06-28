@@ -605,13 +605,22 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'register') {
     return authLimiter(req, res, async () => {
       try {
-        const { email, password, name, username, consentGiven } = req.body;
+        const { email, password, name, username, consentGiven, otp } = req.body;
         if (!email?.trim() || !password || !name?.trim()) {
           return res.status(400).json({ error: 'Name, email and password are required' });
         }
         if (!consentGiven) {
           return res.status(400).json({ error: 'You must agree to the Terms of Service and Privacy Policy to create an account' });
         }
+        // Require email verification for all new accounts — no unverified signups
+        if (!otp?.trim()) {
+          return res.status(400).json({ error: 'Email verification is required to create an account. Please use the email code sign-up option.' });
+        }
+        const otpCheck = await Otp.findOne({ email: email.toLowerCase().trim(), code: otp.trim() });
+        if (!otpCheck || otpCheck.expiresAt < new Date()) {
+          return res.status(400).json({ error: 'Invalid or expired verification code. Please request a new one.' });
+        }
+        await Otp.deleteOne({ _id: otpCheck._id });
         if (password.length < 8) {
           return res.status(400).json({ error: 'Password must be at least 8 characters' });
         }

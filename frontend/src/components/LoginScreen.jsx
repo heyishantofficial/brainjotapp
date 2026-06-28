@@ -13,7 +13,6 @@ const BrandGraphic = () => (
 );
 
 export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPrivacy, onOpenTerms }) {
-  const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [authType, setAuthType] = useState('password'); // 'password' | 'otp'
 
   const [name, setName] = useState('');
@@ -33,7 +32,8 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
   const [showForgot, setShowForgot] = useState(false);
   const debounceRef = useRef(null);
 
-  const isRegistering = (mode === 'register' && authType === 'password') || (authType === 'otp' && otpSent && !emailExists);
+  // Registration only happens via OTP — password mode is login-only
+  const isRegistering = authType === 'otp' && otpSent && !emailExists;
 
   useEffect(() => {
     if (isRegistering && name && !username) {
@@ -130,22 +130,12 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       else await handleRegisterOtp();
       return;
     }
-    if (mode === 'register') {
-      if (usernameStatus !== 'available') { setError('Please choose a valid, available username'); return; }
-      if (!consentGiven) { setError('You must agree to the Terms of Service and Privacy Policy'); return; }
-    }
     setLoading(true);
     try {
-      const body = mode === 'register' ? { name, email, password, username, consentGiven: true } : { email, password };
-      const r = await api(mode, body);
+      const r = await api('login', { email, password });
       if (r.ok) onLoginSuccess(r.user);
-      else setError(r.error || 'Something went wrong. Please try again.');
+      else setError(r.error || 'Invalid email or password.');
     } finally { setLoading(false); }
-  };
-
-  const switchMode = (next) => {
-    setMode(next); setError(''); setUsernameStatus(null);
-    setShowForgot(false); setOtpSent(false); setOtp(''); setConsentGiven(false);
   };
 
   const switchAuthType = (next) => {
@@ -168,7 +158,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       if (otpSent) return 'Check your inbox';
       return 'Continue with email';
     }
-    return mode === 'login' ? 'Sign in' : 'Create account';
+    return 'Sign in';
   };
 
   const getSubtext = () => {
@@ -176,7 +166,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       if (otpSent) return emailExists ? `We sent a 6-digit code to ${email}` : 'Complete your profile to finish signing up.';
       return 'Enter your email to sign in or create an account.';
     }
-    return mode === 'login' ? 'Welcome back to your workspace.' : 'Get started with BrainJot today.';
+    return 'Welcome back to your workspace.';
   };
 
   const getButtonText = () => {
@@ -185,7 +175,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
       if (!otpSent) return 'Continue with email';
       return emailExists ? 'Verify & Sign in' : 'Complete sign up';
     }
-    return mode === 'login' ? 'Sign in' : 'Create account';
+    return 'Sign in';
   };
 
   return (
@@ -254,9 +244,9 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
                     type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••"
                     value={password}
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    autoComplete="current-password"
                     onChange={e => setPassword(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && mode !== 'register' && doSubmit()}
+                    onKeyDown={e => e.key === 'Enter' && doSubmit()}
                   />
                   <button type="button" className="lv-eye" onClick={() => setShowPassword(v => !v)} tabIndex={-1}>
                     {showPassword
@@ -347,13 +337,17 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
               </div>
             )}
 
-            {/* Sign in / Sign up toggle */}
+            {/* Sign up prompt — always routes new users through OTP (email verification) */}
             {authType === 'password' && (
               <p className="lv-switch">
-                {mode === 'login'
-                  ? <>Need an account?{' '}<button className="lv-link" onClick={() => switchMode('register')}>Sign up</button></>
-                  : <>Already have an account?{' '}<button className="lv-link" onClick={() => switchMode('login')}>Sign in</button></>
-                }
+                Need an account?{' '}
+                <button className="lv-link" onClick={() => switchAuthType('otp')}>Sign up with email</button>
+              </p>
+            )}
+            {authType === 'otp' && !otpSent && (
+              <p className="lv-switch">
+                Already have an account?{' '}
+                <button className="lv-link" onClick={() => switchAuthType('password')}>Sign in with password</button>
               </p>
             )}
           </div>
