@@ -156,10 +156,29 @@ app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+  // F21: HSTS — 1-year max-age, include subdomains
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   // 'sha256-...' covers the one inline theme-detection script in index.html.
   // All other scripts are external modules — unsafe-inline is no longer needed in script-src.
   // style-src keeps unsafe-inline because React's CSS-in-JS emits inline <style> tags.
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'sha256-ewqMvVQUaHXMsUBgLyvLLkarT9ybz5nbsiioiDY7AJc=' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; frame-src 'self' https://accounts.google.com; connect-src 'self' wss: https:; frame-ancestors 'self';");
+  next();
+});
+
+// F11: Idle session timeout — 4 hours of inactivity logs out authenticated users.
+// Public auth actions are exempt so login/OTP flows are never blocked.
+const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+const AUTH_ACTIONS = new Set(['login', 'register', 'google_auth', 'send_otp', 'verify_otp', 'register_otp', 'reset_password_via_otp', 'logout', 'logout_all']);
+app.use((req, res, next) => {
+  if (!req.session?.userId) return next();
+  if (AUTH_ACTIONS.has(req.query?.action)) return next();
+  const last = req.session.lastActivity;
+  if (last && Date.now() - last > IDLE_TIMEOUT_MS) {
+    return req.session.destroy(() => res.status(401).json({ error: 'Session expired due to inactivity. Please sign in again.' }));
+  }
+  req.session.lastActivity = Date.now();
   next();
 });
 

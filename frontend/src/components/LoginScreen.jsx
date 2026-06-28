@@ -14,6 +14,7 @@ const TAGLINES = [
 
 export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPrivacy, onOpenTerms }) {
   const [authType, setAuthType] = useState('password'); // 'password' | 'otp'
+  const [googleConsentGiven, setGoogleConsentGiven] = useState(false);
   const [taglineIdx, setTaglineIdx] = useState(0);
   const [taglineVisible, setTaglineVisible] = useState(true);
 
@@ -73,9 +74,14 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
   }, [username, authType, otpSent, emailExists]);
 
   const handleGoogleCredentialResponse = async (response) => {
+    // F6: consent must be given before a new account can be created
+    if (!googleConsentGiven) {
+      setError('Please tick the box below to agree to our Terms & Privacy Policy before signing in with Google.');
+      return;
+    }
     setLoading(true); setError('');
     try {
-      const r = await api('google_auth', { credential: response.credential });
+      const r = await api('google_auth', { credential: response.credential, consentGiven: true });
       if (r.ok) onLoginSuccess(r.user);
       else setError(r.error || 'Google Authentication failed');
     } catch { setError('Failed to connect to server'); }
@@ -211,13 +217,16 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
         {/* Google SSO */}
         {googleClientId && !otpSent && (
           <>
-            <div id="google-signin-btn" style={{ width: '100%', marginBottom: '6px' }} />
-            <p className="lv-google-notice">
-              By continuing with Google you agree to our{' '}
-              <button type="button" className="lv-link" onClick={onOpenTerms}>Terms</button>
-              {' & '}
-              <button type="button" className="lv-link" onClick={onOpenPrivacy}>Privacy Policy</button>
-            </p>
+            <div id="google-signin-btn" style={{ width: '100%', marginBottom: '8px' }} />
+            <label className="lv-consent" style={{ marginBottom: '2px' }}>
+              <input type="checkbox" checked={googleConsentGiven} onChange={e => { setGoogleConsentGiven(e.target.checked); setError(''); }} />
+              <span>
+                I agree to the{' '}
+                <button type="button" className="lv-link" onClick={onOpenTerms}>Terms of Service</button>
+                {' '}and{' '}
+                <button type="button" className="lv-link" onClick={onOpenPrivacy}>Privacy Policy</button>
+              </span>
+            </label>
           </>
         )}
 

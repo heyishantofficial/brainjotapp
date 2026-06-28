@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const disposableDomains = new Set(require('disposable-email-domains'));
@@ -23,6 +24,46 @@ const { livekitEnabled, ActiveCall, generateToken, removeParticipant, LIVEKIT_UR
 const logger = require('../utils/logger');
 
 const router = express.Router();
+
+// ── OTP security helpers ──────────────────────────────────────────
+// SESSION_SECRET is required in production so it's a safe HMAC key.
+const OTP_SECRET = process.env.SESSION_SECRET || 'brainjot-dev-otp-fallback';
+function hashOtp(code) {
+  return crypto.createHmac('sha256', OTP_SECRET).update(String(code)).digest('hex');
+}
+function verifyOtp(submitted, storedHash) {
+  if (!storedHash) return false;
+  try {
+    const a = Buffer.from(hashOtp(String(submitted)), 'hex');
+    const b = Buffer.from(storedHash, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch { return false; }
+}
+
+// One-way hash of IP before storing — IP is PII under GDPR.
+function hashIp(ip) {
+  return crypto.createHash('sha256').update(ip || '').digest('hex').slice(0, 16);
+}
+
+// HIBP k-anonymity check — fails open (returns false) if API is unreachable.
+function checkPwnedPassword(password) {
+  const hash = crypto.createHash('sha1').update(password).digest('hex').toUpperCase();
+  const prefix = hash.slice(0, 5);
+  const suffix = hash.slice(5);
+  return new Promise((resolve) => {
+    const req = https.get(
+      { hostname: 'api.pwnedpasswords.com', path: `/range/${prefix}`, timeout: 3000,
+        headers: { 'Add-Padding': 'true', 'User-Agent': 'BrainJot-Auth/1.0' } },
+      (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data.split('\r\n').some(l => l.split(':')[0] === suffix)));
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
 
 function emitProjectUpdate(req, projectId) {
   req.app.get('io')?.to(`project:${projectId}`).emit('project_updated', { projectId });
@@ -603,8 +644,13 @@ router.get('/', apiLimiter, async (req, res) => {
 router.post('/', apiLimiter, async (req, res, next) => {
   const action = req.query.action;
 
-  // ── register ──
+  // ── register (disabled — all signups must go through register_otp) ──
   if (action === 'register') {
+    return res.status(410).json({ error: 'This endpoint is no longer available. Please sign up using the email verification flow.' });
+  }
+
+  // ── register_DISABLED (dead code kept for reference — removed from routing) ──
+  if (action === '__register_disabled') {
     return authLimiter(req, res, async () => {
       try {
         const { email, password, name, username, consentGiven, otp } = req.body;
@@ -687,7 +733,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
           // Still increment attempt counter on unknown email to prevent timing-based enumeration
           await LoginAttempt.findOneAndUpdate(
             { email: cleanEmail },
-            { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
+            { $inc: { count: 1 }, $set: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
             { upsert: true }
           );
           return res.status(401).json({ error: 'Invalid email or password' });
@@ -697,7 +743,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
           logger.warn({ ip: req.ip, userId: user.id, reason: 'wrong_password' }, '[auth] login_failure');
           await LoginAttempt.findOneAndUpdate(
             { email: cleanEmail },
-            { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
+            { $inc: { count: 1 }, $set: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
             { upsert: true }
           );
           return res.status(401).json({ error: 'Invalid email or password' });
@@ -726,7 +772,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'google_auth') {
     return authLimiter(req, res, async () => {
       try {
-        const { credential } = req.body;
+        const { credential, consentGiven } = req.body;
         if (!credential) {
           return res.status(400).json({ error: 'Google credential is required' });
         }
@@ -760,6 +806,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
         const role = ADMIN_EMAILS.includes(cleanEmail) ? 'superadmin' : 'user';
         
         if (!user) {
+          // F6: new users must give explicit consent — existing users already gave it at signup
+          if (!consentGiven) {
+            return res.status(400).json({ error: 'You must agree to the Terms of Service and Privacy Policy to create an account.' });
+          }
           // Register a new user
           const baseUsername = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 15).toLowerCase();
           let finalUsername = baseUsername || 'user';
@@ -781,7 +831,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
             consentGiven: true,
             consentAt: new Date(),
             consentVersion: '1.0',
-            consentIp: req.ip,
+            consentIp: hashIp(req.ip),  // F16: hash IP — it's PII under GDPR
           });
           await seedDefaultData(newUserId);
         } else {
@@ -836,14 +886,22 @@ router.post('/', apiLimiter, async (req, res, next) => {
           return res.status(400).json({ error: 'Temporary or disposable email addresses are not allowed. Please use a real email address.' });
         }
 
-        // Verify the domain has live mail servers (MX records)
+        // F20: MX check with 3-second timeout; fails open on DNS errors so legitimate
+        // domains with slow/unusual DNS configs are not blocked.
         try {
-          const mx = await dns.resolveMx(emailDomain);
+          const mx = await Promise.race([
+            dns.resolveMx(emailDomain),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('DNS_TIMEOUT')), 3000)),
+          ]);
           if (!mx || mx.length === 0) {
             return res.status(400).json({ error: 'This email domain does not appear to accept mail. Please use a valid email address.' });
           }
-        } catch {
-          return res.status(400).json({ error: 'Could not verify this email domain. Please check your email and try again.' });
+        } catch (dnsErr) {
+          if (dnsErr.code === 'ENOTFOUND' || dnsErr.code === 'ENODATA') {
+            return res.status(400).json({ error: 'This email domain does not appear to accept mail. Please use a valid email address.' });
+          }
+          // Timeout or unknown DNS error — allow through and log for monitoring
+          logger.warn({ emailDomain, err: dnsErr.message }, '[send_otp] MX check skipped — allowing through');
         }
 
         // Enforce 60-second resend cooldown per email to prevent OTP flooding
@@ -852,12 +910,14 @@ router.post('/', apiLimiter, async (req, res, next) => {
           return res.status(429).json({ error: 'Please wait before requesting another code' });
         }
 
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        // F1: crypto.randomInt is CSPRNG — Math.random() is not
+        const otpCode = crypto.randomInt(100000, 1000000).toString();
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
+        // F2: store HMAC hash of code, never plaintext
         await Otp.findOneAndUpdate(
           { email: cleanEmail },
-          { code: otpCode, expiresAt, attempts: 0, lastSentAt: new Date() },
+          { codeHash: hashOtp(otpCode), expiresAt, attempts: 0, lastSentAt: new Date() },
           { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         
@@ -903,7 +963,11 @@ router.post('/', apiLimiter, async (req, res, next) => {
         if (!email || !otp) {
           return res.status(400).json({ error: 'Email and OTP are required' });
         }
-        
+        // F17: reject obviously malformed codes before hitting the DB
+        if (!/^\d{6}$/.test(otp.trim())) {
+          return res.status(400).json({ error: 'Verification code must be 6 digits' });
+        }
+
         const cleanEmail = email.toLowerCase().trim();
 
         // Look up OTP by email first so we can apply the attempt counter
@@ -920,7 +984,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
           return res.status(400).json({ error: 'Too many incorrect attempts. Request a new code.' });
         }
 
-        if (otpDoc.code !== otp.trim()) {
+        // F2: compare against HMAC hash, not plaintext
+        if (!verifyOtp(otp.trim(), otpDoc.codeHash)) {
           otpDoc.attempts = (otpDoc.attempts || 0) + 1;
           await otpDoc.save();
           const remaining = MAX_OTP_ATTEMPTS - otpDoc.attempts;
@@ -967,16 +1032,21 @@ router.post('/', apiLimiter, async (req, res, next) => {
         }
         
         const cleanEmail = email.toLowerCase().trim();
-        const otpDoc = await Otp.findOne({ email: cleanEmail, code: otp.trim() });
-        if (!otpDoc || otpDoc.expiresAt < new Date()) {
+        // F17: format check
+        if (!/^\d{6}$/.test(otp?.trim())) {
+          return res.status(400).json({ error: 'Verification code must be 6 digits' });
+        }
+        // F2: look up by email, compare hash
+        const otpDoc = await Otp.findOne({ email: cleanEmail });
+        if (!otpDoc || otpDoc.expiresAt < new Date() || !verifyOtp(otp.trim(), otpDoc.codeHash)) {
           return res.status(400).json({ error: 'Invalid or expired OTP code' });
         }
-        
+
         const existing = await User.findOne({ email: cleanEmail });
         if (existing) {
           return res.status(400).json({ error: 'Account already exists. Please login.' });
         }
-        
+
         const cleanUsername = username.toLowerCase().trim();
         if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-z0-9_]+$/.test(cleanUsername)) {
           return res.status(400).json({ error: 'Username must be 3-20 chars, letters/numbers/underscores only' });
@@ -985,15 +1055,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
         if (takenUsername) {
           return res.status(409).json({ error: 'Username already taken' });
         }
-        
+
         await Otp.deleteOne({ _id: otpDoc._id });
-        
+
         const newUserId = 'user_' + uid();
         const role = ADMIN_EMAILS.includes(cleanEmail) ? 'superadmin' : 'user';
         const user = await User.create({
           id: newUserId,
           email: cleanEmail,
-          name: name.trim(),
+          name: name.trim().slice(0, 100),  // F19: cap name length
           username: cleanUsername,
           passwordHash: 'OTP_AUTH_USER',
           role,
@@ -1001,7 +1071,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
           consentGiven: true,
           consentAt: new Date(),
           consentVersion: '1.0',
-          consentIp: req.ip,
+          consentIp: hashIp(req.ip),  // F16: hash IP before storing
         });
         
         await seedDefaultData(newUserId);
@@ -1037,6 +1107,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
         if (!/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
           return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
         }
+        // F17: format check
+        if (!/^\d{6}$/.test(otp?.trim())) {
+          return res.status(400).json({ error: 'Verification code must be 6 digits' });
+        }
         const cleanEmail = email.toLowerCase().trim();
         const otpDoc = await Otp.findOne({ email: cleanEmail });
         if (!otpDoc || otpDoc.expiresAt < new Date()) {
@@ -1047,7 +1121,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
           await Otp.deleteOne({ _id: otpDoc._id });
           return res.status(400).json({ error: 'Too many incorrect attempts. Request a new code.' });
         }
-        if (otpDoc.code !== otp.trim()) {
+        // F2: compare hash
+        if (!verifyOtp(otp.trim(), otpDoc.codeHash)) {
           otpDoc.attempts = (otpDoc.attempts || 0) + 1;
           await otpDoc.save();
           const remaining = MAX_OTP_ATTEMPTS - otpDoc.attempts;
@@ -1057,10 +1132,22 @@ router.post('/', apiLimiter, async (req, res, next) => {
         if (!user) {
           return res.status(404).json({ error: 'No account found for this email' });
         }
+        // F8: HIBP breach check — fail open so network issues don't block resets
+        const pwned = await checkPwnedPassword(newPassword);
+        if (pwned) {
+          return res.status(400).json({ error: 'This password has appeared in known data breaches. Please choose a different password.' });
+        }
         await Otp.deleteOne({ _id: otpDoc._id });
         await User.updateOne({ id: user.id }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
         logger.info({ userId: user.id, ip: req.ip }, '[auth] reset_password_via_otp');
-        // Log them in so they land on the dashboard immediately after reset
+        // F18: invalidate all other sessions so a compromised old session can't be reused after reset
+        const db = mongoose.connection.db;
+        const stale = await db.collection('sessions').find(
+          { session: { $regex: `"userId":"${user.id}"` } },
+          { projection: { _id: 1 } }
+        ).toArray();
+        if (stale.length) await db.collection('sessions').deleteMany({ _id: { $in: stale.map(s => s._id) } });
+        // Create a fresh session
         await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
@@ -1109,17 +1196,75 @@ router.post('/', apiLimiter, async (req, res, next) => {
 
   // ── update_profile ──
   if (action === 'update_profile') {
-    const { name, email } = req.body;
-    const updates = {};
-    if (name?.trim()) updates.name = name.trim().slice(0, 100);
-    if (email?.trim()) {
-      const taken = await User.findOne({ email: email.toLowerCase().trim(), id: { $ne: userId } });
-      if (taken) { res.status(409).json({ error: 'Email already in use' }); return; }
-      updates.email = email.toLowerCase().trim();
-    }
-    if (!Object.keys(updates).length) { res.status(400).json({ error: 'Nothing to update' }); return; }
+    const { name } = req.body;
+    if (!name?.trim()) { res.status(400).json({ error: 'Nothing to update' }); return; }
+    const updates = { name: name.trim().slice(0, 100) };
     await User.updateOne({ id: userId }, updates);
-    res.json({ ok: true, name: updates.name, email: updates.email });
+    res.json({ ok: true, name: updates.name });
+    return;
+  }
+
+  // ── request_email_change ── (F13)
+  // Step 1: send OTP to the NEW email to prove ownership before committing the change.
+  if (action === 'request_email_change') {
+    if (!resend) { res.status(500).json({ error: 'Email service not configured' }); return; }
+    const { newEmail } = req.body;
+    if (!newEmail?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) {
+      res.status(400).json({ error: 'Invalid email address' }); return;
+    }
+    const cleanNew = newEmail.toLowerCase().trim();
+    const currentUser = await User.findOne({ id: userId }).select('email -_id').lean();
+    if (cleanNew === currentUser?.email) { res.status(400).json({ error: 'That is already your current email' }); return; }
+    const taken = await User.findOne({ email: cleanNew, id: { $ne: userId } });
+    if (taken) { res.status(409).json({ error: 'That email is already in use by another account' }); return; }
+    const domain = cleanNew.split('@')[1];
+    if (disposableDomains.has(domain)) { res.status(400).json({ error: 'Temporary email addresses are not allowed' }); return; }
+    const cooldown = await Otp.findOne({ email: cleanNew });
+    if (cooldown?.lastSentAt && (Date.now() - cooldown.lastSentAt.getTime()) < 60 * 1000) {
+      res.status(429).json({ error: 'Please wait before requesting another code' }); return;
+    }
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    await Otp.findOneAndUpdate(
+      { email: cleanNew },
+      { codeHash: hashOtp(otpCode), expiresAt, attempts: 0, lastSentAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    await resend.emails.send({
+      from: FROM_EMAIL, to: cleanNew,
+      subject: `Verify your new BrainJot email: ${otpCode}`,
+      html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0a0a0a;color:#f5f5f5;border-radius:16px"><h1 style="font-size:24px;font-weight:800;margin:0 0 16px">Verify your new email</h1><p style="font-size:16px;line-height:1.6;margin:0 0 24px">Use this code to confirm your new email address on BrainJot. It expires in 5 minutes.</p><div style="background:#1e1e1e;border:1px solid #333;padding:16px;border-radius:12px;text-align:center;font-size:32px;font-weight:800;letter-spacing:6px;color:#D4FF32;margin-bottom:24px">${otpCode}</div><p style="font-size:13px;color:#666;margin:0;line-height:1.6">If you didn't request this, you can safely ignore it.</p></div>`,
+    });
+    logger.info({ userId, newEmail: cleanNew }, '[auth] email_change_otp_sent');
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── confirm_email_change ── (F13)
+  // Step 2: verify OTP sent to new email, then commit the change.
+  if (action === 'confirm_email_change') {
+    const { newEmail, otp } = req.body;
+    if (!newEmail?.trim() || !otp?.trim()) { res.status(400).json({ error: 'New email and code are required' }); return; }
+    if (!/^\d{6}$/.test(otp.trim())) { res.status(400).json({ error: 'Verification code must be 6 digits' }); return; }
+    const cleanNew = newEmail.toLowerCase().trim();
+    const taken = await User.findOne({ email: cleanNew, id: { $ne: userId } });
+    if (taken) { res.status(409).json({ error: 'That email is already in use' }); return; }
+    const otpDoc = await Otp.findOne({ email: cleanNew });
+    if (!otpDoc || otpDoc.expiresAt < new Date() || !verifyOtp(otp.trim(), otpDoc.codeHash)) {
+      res.status(400).json({ error: 'Invalid or expired verification code' }); return;
+    }
+    await Otp.deleteOne({ _id: otpDoc._id });
+    await User.updateOne({ id: userId }, { email: cleanNew });
+    logger.info({ userId, newEmail: cleanNew, ip: req.ip }, '[auth] email_changed');
+    res.json({ ok: true, email: cleanNew });
+    return;
+  }
+
+  // ── logout_all ── (F12)
+  if (action === 'logout_all') {
+    const db = mongoose.connection.db;
+    await db.collection('sessions').deleteMany({ session: { $regex: `"userId":"${userId}"` } });
+    req.session.destroy(() => res.json({ ok: true }));
     return;
   }
 
@@ -1147,6 +1292,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }
     const match = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!match) { res.status(401).json({ error: 'Current password is incorrect' }); return; }
+    // F8: HIBP breach check — fail open on network issues
+    const pwned = await checkPwnedPassword(newPassword);
+    if (pwned) { res.status(400).json({ error: 'This password has appeared in known data breaches. Please choose a different one.' }); return; }
     await User.updateOne({ id: userId }, { passwordHash: await bcrypt.hash(newPassword, SALT_ROUNDS) });
     logger.info({ userId, ip: req.ip }, '[audit] change_password');
     // Invalidate all other active sessions so stolen cookies can't be used after a password change.

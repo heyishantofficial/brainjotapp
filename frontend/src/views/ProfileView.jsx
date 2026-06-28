@@ -102,6 +102,16 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const avatarInputRef = useRef(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
 
+  // change email (OTP-verified)
+  const [emailChangeStep, setEmailChangeStep] = useState('idle'); // 'idle' | 'request' | 'verify'
+  const [newEmail,        setNewEmail]        = useState('');
+  const [emailChangeOtp,  setEmailChangeOtp]  = useState('');
+  const [emailChangeMsg,  setEmailChangeMsg]  = useState('');
+  const [emailChangeSaving, setEmailChangeSaving] = useState(false);
+
+  // logout all devices
+  const [logoutAllMsg, setLogoutAllMsg] = useState('');
+
   // delete account
   const [showDelete,  setShowDelete]  = useState(false);
   const [deletePw,    setDeletePw]    = useState('');
@@ -137,15 +147,45 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const handleSaveProfile = async () => {
     if (!editName.trim()) { setEditMsg('Name cannot be empty'); return; }
     setEditSaving(true); setEditMsg('');
-    const r = await api('update_profile', { name: editName.trim(), email: editEmail.trim() });
+    const r = await api('update_profile', { name: editName.trim() });
     if (r?.ok) {
       setEditMsg('✓ Saved');
-      setProfileData(prev => ({ ...prev, user: { ...prev.user, name: r.name || editName.trim(), email: r.email || editEmail.trim() } }));
-      onUserUpdate?.({ name: r.name || editName.trim(), email: r.email || editEmail.trim() });
+      setProfileData(prev => ({ ...prev, user: { ...prev.user, name: r.name || editName.trim() } }));
+      onUserUpdate?.({ name: r.name || editName.trim() });
     } else {
       setEditMsg(r?.error || 'Something went wrong');
     }
     setEditSaving(false);
+  };
+
+  const handleRequestEmailChange = async () => {
+    if (!newEmail.trim()) { setEmailChangeMsg('Enter a new email address'); return; }
+    setEmailChangeSaving(true); setEmailChangeMsg('');
+    const r = await api('request_email_change', { newEmail: newEmail.trim() });
+    if (r?.ok) { setEmailChangeStep('verify'); setEmailChangeMsg(''); }
+    else setEmailChangeMsg(r?.error || 'Something went wrong');
+    setEmailChangeSaving(false);
+  };
+
+  const handleConfirmEmailChange = async () => {
+    if (!emailChangeOtp.trim()) { setEmailChangeMsg('Enter the code from your new email'); return; }
+    setEmailChangeSaving(true); setEmailChangeMsg('');
+    const r = await api('confirm_email_change', { newEmail: newEmail.trim(), otp: emailChangeOtp.trim() });
+    if (r?.ok) {
+      setEmailChangeMsg('✓ Email updated');
+      setEmailChangeStep('idle');
+      setNewEmail(''); setEmailChangeOtp('');
+      setProfileData(prev => ({ ...prev, user: { ...prev.user, email: r.email } }));
+      onUserUpdate?.({ email: r.email });
+    } else setEmailChangeMsg(r?.error || 'Invalid or expired code');
+    setEmailChangeSaving(false);
+  };
+
+  const handleLogoutAll = async () => {
+    setLogoutAllMsg('');
+    const r = await api('logout_all', {});
+    if (r?.ok) { onLogout?.(); }
+    else setLogoutAllMsg(r?.error || 'Something went wrong');
   };
 
   const handleChangePassword = async () => {
@@ -362,8 +402,8 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
                 <div style={{ ...inputStyle, color: 'var(--accent)', fontWeight: '700', cursor: 'default', userSelect: 'all' }}>@{user.username}</div>
               </Field>
             )}
-            <Field label="Email Address">
-              <input value={editEmail} onChange={e => { setEditEmail(e.target.value); setEditMsg(''); }} style={inputStyle} placeholder="you@email.com" type="email" />
+            <Field label="Email Address (read-only)">
+              <div style={{ ...inputStyle, color: 'var(--muted)', cursor: 'default', userSelect: 'all' }}>{user.email}</div>
             </Field>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
               <button onClick={handleSaveProfile} disabled={editSaving} style={btnPrimary}>
@@ -373,6 +413,45 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
                 <span style={{ fontSize: '13px', color: editMsg.startsWith('✓') ? '#10b981' : '#ef4444' }}>{editMsg}</span>
               )}
             </div>
+          </div>
+        </Section>
+
+        {/* ── Change Email ── */}
+        <Section title="Change Email">
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '18px', padding: '22px' }}>
+            <p style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: '1.6', marginTop: 0, marginBottom: '16px' }}>
+              A verification code will be sent to your new email address to confirm ownership.
+            </p>
+            {emailChangeStep === 'idle' && (
+              <>
+                <Field label="New Email Address">
+                  <input value={newEmail} onChange={e => { setNewEmail(e.target.value); setEmailChangeMsg(''); }} style={inputStyle} type="email" placeholder="new@email.com" />
+                </Field>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button onClick={handleRequestEmailChange} disabled={emailChangeSaving} style={btnPrimary}>
+                    {emailChangeSaving ? 'Sending…' : 'Send Verification Code'}
+                  </button>
+                  {emailChangeMsg && <span style={{ fontSize: '13px', color: '#ef4444' }}>{emailChangeMsg}</span>}
+                </div>
+              </>
+            )}
+            {emailChangeStep === 'verify' && (
+              <>
+                <p style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: '600', marginTop: 0, marginBottom: '12px' }}>
+                  Code sent to {newEmail}
+                </p>
+                <Field label="Verification Code">
+                  <input value={emailChangeOtp} onChange={e => { setEmailChangeOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setEmailChangeMsg(''); }} style={{ ...inputStyle, letterSpacing: '6px', fontSize: '18px', fontWeight: '700' }} placeholder="123456" maxLength={6} />
+                </Field>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button onClick={handleConfirmEmailChange} disabled={emailChangeSaving} style={btnPrimary}>
+                    {emailChangeSaving ? 'Verifying…' : 'Confirm Change'}
+                  </button>
+                  <button onClick={() => { setEmailChangeStep('idle'); setEmailChangeMsg(''); setEmailChangeOtp(''); }} style={btnSecondary}>Cancel</button>
+                  {emailChangeMsg && <span style={{ fontSize: '13px', color: emailChangeMsg.startsWith('✓') ? '#10b981' : '#ef4444' }}>{emailChangeMsg}</span>}
+                </div>
+              </>
+            )}
           </div>
         </Section>
 
@@ -443,7 +522,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
           </div>
         </Section>
 
-        {/* ── Sign Out ── */}
+        {/* ── Session ── */}
         <Section title="Session">
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '18px', padding: '22px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -453,6 +532,14 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
               </div>
               <button onClick={onLogout} style={{ ...btnSecondary, whiteSpace: 'nowrap' }}>Sign Out</button>
             </div>
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '18px', marginTop: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: '700' }}>Sign Out Everywhere</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>Revoke all active sessions across every device</div>
+              </div>
+              <button onClick={handleLogoutAll} style={{ ...btnSecondary, whiteSpace: 'nowrap', color: '#f59e0b', borderColor: '#f59e0b44' }}>Sign Out All</button>
+            </div>
+            {logoutAllMsg && <div style={{ fontSize: '13px', color: '#ef4444', marginTop: '10px' }}>{logoutAllMsg}</div>}
           </div>
         </Section>
 
