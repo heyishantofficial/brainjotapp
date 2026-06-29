@@ -2,11 +2,9 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
-import { registerSW } from 'virtual:pwa-register'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import PWAUpdatePrompt from './components/PWAUpdatePrompt.jsx'
 import { onCLS, onINP, onLCP, onFCP, onTTFB } from 'web-vitals'
-
-registerSW()
 
 // ── Web Vitals ────────────────────────────────────────────────────
 // Reports Core Web Vitals to the console in a structured format.
@@ -32,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ErrorBoundary>
       <App />
+      <PWAUpdatePrompt />
     </ErrorBoundary>
   </React.StrictMode>,
 )

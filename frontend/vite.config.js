@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       devOptions: {
         enabled: false
       },
@@ -45,8 +45,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
-            // API calls — NetworkFirst: try live, fall back to 5-minute stale cache
-            urlPattern: /^\/api\//,
+            // API calls — NetworkFirst: try live, fall back to 5-minute stale cache.
+            // Match by pathname so it works whether the API is same-origin (dev proxy)
+            // or on a separate origin in production (VITE_API_URL).
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'brainjot-api-cache',
@@ -55,8 +57,8 @@ export default defineConfig({
             }
           },
           {
-            // Uploaded files — CacheFirst: serve locally if cached
-            urlPattern: /^\/uploads\//,
+            // Uploaded files — CacheFirst: serve locally if cached (same- or cross-origin).
+            urlPattern: ({ url }) => url.pathname.startsWith('/uploads/'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'brainjot-uploads-cache',
