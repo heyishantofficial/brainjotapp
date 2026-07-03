@@ -1,9 +1,5 @@
 import React from 'react';
-import { Bell, Search, MessageSquarePlus, Users } from 'lucide-react';
-
-// Community lives on its own subdomain (separate app/DB). This is just a link out
-// — zero load on the main app. Override via VITE_COMMUNITY_URL per environment.
-const COMMUNITY_URL = import.meta.env.VITE_COMMUNITY_URL || 'https://community.brainjot.space';
+import { Bell, Search, MessageSquarePlus } from 'lucide-react';
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
@@ -90,27 +86,6 @@ export default function DashboardView({
   onOpenFeedback,
   unreadNotifications = 0,
 }) {
-  // Community unread count (DMs + community notifications), fetched from the
-  // COMMUNITY backend directly — zero load on this app's backend. Same-site
-  // cookie carries the community session; silent zero for users who have
-  // never opened the community.
-  const [communityUnread, setCommunityUnread] = React.useState(0);
-  React.useEffect(() => {
-    const communityApi = (import.meta.env.VITE_COMMUNITY_API_URL || 'https://api.community.brainjot.space').replace(/\/+$/, '');
-    let cancelled = false;
-    async function fetchBadge() {
-      try {
-        const r = await fetch(`${communityApi}/api/notifications/badges`, { credentials: 'include' });
-        if (!r.ok) return;
-        const data = await r.json();
-        if (!cancelled) setCommunityUnread(data.total || 0);
-      } catch { /* community unreachable or not logged in — no badge */ }
-    }
-    fetchBadge();
-    const t = setInterval(fetchBadge, 120000); // every 2 min; it's a remote app
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
-
   let doneCount  = 0;
   let totalCount = 0;
   let focusTasks = [];
@@ -214,14 +189,6 @@ export default function DashboardView({
               )}
             </span>
           </button>
-          <a className="theme-toggle" href={COMMUNITY_URL} style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} title="Community">
-            <span style={{ position: 'relative', display: 'flex' }}>
-              <Users size={20} strokeWidth={2.5} />
-              {communityUnread > 0 && (
-                <span style={{ position: 'absolute', top: '-2px', right: '-2px', background: '#ff4c4c', color: 'white', fontSize: '9px', fontWeight: '900', padding: '2px 5px', borderRadius: '10px' }}>{communityUnread > 9 ? '9+' : communityUnread}</span>
-              )}
-            </span>
-          </a>
           <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenSearch} title="Search (Cmd+F)">
             <Search size={20} strokeWidth={2.5} />
           </button>

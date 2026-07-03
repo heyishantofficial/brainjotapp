@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Users } from 'lucide-react';
 import { api } from '../api';
 import DialogModal from './DialogModal';
 import ProjectModal from './ProjectModal';
 import SpaceModal from './SpaceModal';
+
+// Community lives on its own subdomain (separate app/DB) — this is just a link
+// out, zero load on this app. Override via VITE_COMMUNITY_URL per environment.
+const COMMUNITY_URL = import.meta.env.VITE_COMMUNITY_URL || 'https://community.brainjot.space';
 
 export default function Sidebar({
   spaces = [],
@@ -34,6 +39,27 @@ export default function Sidebar({
   const [showEditProject, setShowEditProject] = useState(false);
   const [showEditSpace,   setShowEditSpace]   = useState(null);
   const [dialogConfig,    setDialogConfig]    = useState({ open: false, type: '', title: '', message: '', onConfirm: null });
+
+  // Community unread count (DMs + community notifications), fetched from the
+  // COMMUNITY backend directly — zero load on this app's backend. Same-site
+  // cookie carries the community session; silent zero for users who have
+  // never opened the community.
+  const [communityUnread, setCommunityUnread] = useState(0);
+  useEffect(() => {
+    const communityApi = (import.meta.env.VITE_COMMUNITY_API_URL || 'https://api.community.brainjot.space').replace(/\/+$/, '');
+    let cancelled = false;
+    async function fetchBadge() {
+      try {
+        const r = await fetch(`${communityApi}/api/notifications/badges`, { credentials: 'include' });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setCommunityUnread(data.total || 0);
+      } catch { /* community unreachable or not logged in — no badge */ }
+    }
+    fetchBadge();
+    const t = setInterval(fetchBadge, 120000); // every 2 min; it's a remote app
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
 
   // Auto-expand the space that contains the active project or the active space
   useEffect(() => {
@@ -468,6 +494,15 @@ export default function Sidebar({
         )}
       </nav>
 
+      <div className="sb-bottom">
+        <a className="sb-community-btn" href={COMMUNITY_URL} title="brainjot Community">
+          <Users size={17} strokeWidth={2.5} />
+          BJ Community
+          {communityUnread > 0 && (
+            <span className="sb-community-badge">{communityUnread > 9 ? '9+' : communityUnread}</span>
+          )}
+        </a>
+      </div>
 
       {/* Project context menu */}
       {contextMenu.open && (

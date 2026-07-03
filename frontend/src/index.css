@@ -101,12 +101,14 @@ button,[role="button"],input,label,select,a{touch-action:manipulation}
 
 /* ── APP ── */
 #app{min-height:100vh}
-.sidebar{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:var(--surface);border-right:0.5px solid var(--border);display:flex;flex-direction:column;z-index:100;overflow-y:auto;transition:transform 0.28s cubic-bezier(0.4,0,0.2,1)}
+.sidebar{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:var(--surface);border-right:0.5px solid var(--border);display:flex;flex-direction:column;z-index:100;overflow:hidden;transition:transform 0.28s cubic-bezier(0.4,0,0.2,1)}
 .sidebar.collapsed{transform:translateX(-100%)}
-.sb-logo{padding:22px 20px 18px;border-bottom:0.5px solid var(--border)}
+.sb-logo{padding:22px 20px 18px;border-bottom:0.5px solid var(--border);flex-shrink:0}
 .logo-text{font-family:var(--font-brain);font-size:22px;font-weight:700;letter-spacing:-.5px}
 .logo-year{font-size:14px;color:var(--muted);margin-top:2px}
-.sb-nav{padding:14px 12px;flex:1}
+/* Only this middle section scrolls — the logo header above and the community
+   button below stay pinned in place no matter how many spaces/projects exist. */
+.sb-nav{padding:14px 12px;flex:1;overflow-y:auto;min-height:0}
 .nav-label{font-size:13px;font-weight:700;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;padding:0 8px;margin-bottom:8px;margin-top:14px}
 .nav-label:first-child{margin-top:0}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:16px;font-weight:500;color:var(--muted);transition:all .15s;background:none;border:none;width:100%;text-align:left}
@@ -119,9 +121,12 @@ button,[role="button"],input,label,select,a{touch-action:manipulation}
 .sb-add{padding:10px 12px}
 .btn-add-proj{width:100%;background:none;border:0.5px dashed var(--border2);border-radius:var(--radius-sm);padding:9px;color:var(--muted);font-family:var(--font-body);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s}
 .btn-add-proj:hover{border-color:rgba(232,224,200,.3);color:var(--text);background:var(--surface2)}
-.sb-bottom{padding:14px;border-top:0.5px solid var(--border)}
+.sb-bottom{padding:14px;border-top:0.5px solid var(--border);flex-shrink:0}
 .btn-logout{width:100%;background:none;border:0.5px solid var(--border2);border-radius:var(--radius-sm);padding:8px;color:var(--muted);font-family:var(--font-body);font-size:15px;cursor:pointer;transition:all .15s}
 .btn-logout:hover{color:var(--text)}
+.sb-community-btn{position:relative;width:100%;background:var(--accent);color:#0D0D0F;border:none;border-radius:var(--radius-sm);padding:11px;font-family:var(--font-head);font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;transition:opacity .15s}
+.sb-community-btn:hover{opacity:.85}
+.sb-community-badge{position:absolute;top:-6px;right:-6px;background:#ff4c4c;color:#fff;font-size:10px;font-weight:900;padding:2px 6px;border-radius:10px;line-height:1.4}
 
 /* ── MAIN ── */
 .main{margin-left:var(--sidebar-w);min-height:100vh;padding:0 0 60px;padding-bottom:max(60px,env(safe-area-inset-bottom));transition:margin-left 0.28s cubic-bezier(0.4,0,0.2,1)}
