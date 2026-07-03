@@ -65,6 +65,33 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loggedIn, setLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+
+  // ── Login redirect (preserve user intent) ─────────────────────────
+  // The community app sends logged-out users here as /login?redirect=<their page>.
+  // Once the user is logged in, bounce them straight back instead of dumping
+  // them on the dashboard. Strict allowlist: only https brainjot.space
+  // destinations (plus localhost in dev) — never an arbitrary URL, so the
+  // param can't be abused as an open redirect for phishing.
+  useEffect(() => {
+    if (!loggedIn || window.location.pathname !== '/login') return;
+    const target = new URLSearchParams(window.location.search).get('redirect');
+    if (target) {
+      try {
+        const url = new URL(target);
+        const sameSite = url.protocol === 'https:' &&
+          (url.hostname === 'brainjot.space' || url.hostname.endsWith('.brainjot.space'));
+        const devLocal = url.protocol === 'http:' &&
+          (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+        if (sameSite || devLocal) {
+          window.location.replace(url.href);
+          return;
+        }
+      } catch { /* not a valid URL — fall through */ }
+    }
+    // No (or unsafe) redirect: clean the /login path off the URL.
+    window.history.replaceState({}, '', '/');
+  }, [loggedIn]);
+
   const [appData, setAppData] = useState({ spaces: [], projects: [] });
   const [currentProjectId, setCurrentProjectId] = useState(null);
   const [currentSpaceId, setCurrentSpaceId] = useState(null);

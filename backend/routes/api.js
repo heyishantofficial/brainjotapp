@@ -9,6 +9,7 @@ const disposableDomains = new Set(require('disposable-email-domains'));
 const bcrypt = require('bcrypt');
 const mongoose = require('mongoose');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
 const { Resend } = require('resend');
 const Project = require('../models/Project');
 const Space = require('../models/Space');
@@ -380,6 +381,33 @@ function requireAuth(req, res, next) {
   }
   next();
 }
+
+// ── Community SSO token ───────────────────────────────────────────
+// Mints a short-lived JWT that the standalone community app
+// (community.brainjot.space) verifies LOCALLY to start its own session. This is
+// the ONLY endpoint the community ever calls on the main app — at most once per
+// login — so the community carries its own traffic without loading this app.
+// Signed with COMMUNITY_JWT_SECRET, a secret shared only between the two backends.
+router.get('/community/sso-token', requireAuth, async (req, res) => {
+  const secret = process.env.COMMUNITY_JWT_SECRET;
+  if (!secret) return res.status(503).json({ error: 'Community SSO not configured' });
+  const user = await User.findOne({ id: req.session.userId })
+    .select('id name username email avatarUrl role -_id').lean();
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const token = jwt.sign(
+    {
+      sub: user.id,
+      name: user.name,
+      username: user.username || '',
+      email: user.email || '',
+      avatarUrl: user.avatarUrl || '',
+      role: user.role || 'user',
+    },
+    secret,
+    { issuer: 'brainjot-app', audience: 'brainjot-community', expiresIn: '2m' },
+  );
+  res.json({ token });
+});
 
 // ── Download helper ───────────────────────────────────────────────
 router.get('/download', requireAuth, (req, res) => {

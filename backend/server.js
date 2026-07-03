@@ -50,9 +50,12 @@ function normalizeOrigin(origin) {
 const defaultAllowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://localhost:5174',         // community frontend (dev)
+  'http://127.0.0.1:5174',
   'https://brainjot.space',
   'https://www.brainjot.space',
   'https://app.brainjot.space',
+  'https://community.brainjot.space', // community app calls /api/community/sso-token
   'https://brainjotapp-4edj.vercel.app',
 ];
 
