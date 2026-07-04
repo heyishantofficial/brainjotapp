@@ -2,7 +2,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { S3Client, DeleteObjectCommand, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
-const { SignatureV4 } = require('@smithy/signature-v4');
 const logger = require('./logger');
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
@@ -45,57 +44,38 @@ if (useR2) {
   }
 }
 
-// SHA-256 backed by Node.js built-in crypto — required by @smithy/signature-v4
-class NodeSha256 {
-  constructor() { this._h = crypto.createHash('sha256'); }
-  update(data, enc) {
-    if (typeof data === 'string') this._h.update(data, enc || 'utf8');
-    else this._h.update(data);
-  }
-  digest() { return Promise.resolve(this._h.digest()); }
-}
-
 // Generate a presigned PUT URL for browser-direct upload.
-// This is pure local computation — no network call is made.
-// The browser then PUT-s the file directly to R2, bypassing the server's
-// broken TLS path to r2.cloudflarestorage.com entirely.
-async function getPresignedPutUrl(key, mimeType, expiresIn = 300) {
+// Hand-rolled SigV4 query auth (pure local computation, no network call):
+// the @smithy/signature-v4 presigner produced signatures R2 rejects with
+// SignatureDoesNotMatch, while this spec-exact implementation verifies.
+// Only content-type-agnostic headers are signed (host), so the browser can
+// send any Content-Type. Query params must stay in sorted order — the
+// canonical request requires it and R2 recomputes it from the raw URL.
+async function getPresignedPutUrl(key, _mimeType, expiresIn = 300) {
   const host = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
   const encodedKey = key.split('/').map(encodeURIComponent).join('/');
   const urlPath = `/${R2_BUCKET_NAME}/${encodedKey}`;
 
-  const signer = new SignatureV4({
-    service: 's3',
-    region: 'auto',
-    credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
-    sha256: NodeSha256,
-  });
+  const longDate = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const shortDate = longDate.slice(0, 8);
+  const scope = `${shortDate}/auto/s3/aws4_request`;
+  const params = [
+    ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
+    ['X-Amz-Content-Sha256', 'UNSIGNED-PAYLOAD'],
+    ['X-Amz-Credential', `${R2_ACCESS_KEY_ID}/${scope}`],
+    ['X-Amz-Date', longDate],
+    ['X-Amz-Expires', String(expiresIn)],
+    ['X-Amz-SignedHeaders', 'host'],
+  ];
+  const qs = params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  const canonical = `PUT\n${urlPath}\n${qs}\nhost:${host}\n\nhost\nUNSIGNED-PAYLOAD`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${longDate}\n${scope}\n${crypto.createHash('sha256').update(canonical).digest('hex')}`;
+  const hmac = (k, m) => crypto.createHmac('sha256', k).update(m).digest();
+  const kSigning = hmac(hmac(hmac(hmac('AWS4' + R2_SECRET_ACCESS_KEY, shortDate), 'auto'), 's3'), 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
 
-  const presigned = await signer.presign(
-    {
-      method: 'PUT',
-      hostname: host,
-      protocol: 'https:',
-      path: urlPath,
-      // Presigned URLs must sign the literal UNSIGNED-PAYLOAD (the body is unknown
-      // at signing time) or S3/R2 rejects every upload with 403 SignatureDoesNotMatch.
-      // The signer hoists this header into the X-Amz-Content-Sha256 query param.
-      headers: { host, 'X-Amz-Content-Sha256': 'UNSIGNED-PAYLOAD' },
-    },
-    {
-      expiresIn,
-      // Don't sign content-type/content-length so the browser can set them freely
-      unsignableHeaders: new Set(['content-type', 'content-length']),
-    },
-  );
-
-  const qs = Object.entries(presigned.query || {})
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(Array.isArray(v) ? v[0] : v)}`)
-    .join('&');
-
-  const url = `https://${host}${urlPath}?${qs}`;
   logger.info({ key, expiresIn }, '[storage] presigned PUT URL generated');
-  return url;
+  return `https://${host}${urlPath}?${qs}&X-Amz-Signature=${signature}`;
 }
 
 async function deleteStoredFile(fileRecord) {
