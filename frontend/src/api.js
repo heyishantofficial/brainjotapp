@@ -59,6 +59,26 @@ export async function apiForm(action, fd) {
   }
 }
 
+// Push a fresh identity (new avatar, name) to the community app immediately by
+// replaying its SSO exchange: mint a token here, post it to the community's
+// sso-login. The community upserts its mirrored user AND backfills the avatar on
+// the user's old posts/comments. Fire-and-forget: the community being down or
+// the user never having opened it must not affect this app.
+export async function syncCommunityIdentity() {
+  try {
+    const communityApi = (import.meta.env.VITE_COMMUNITY_API_URL || 'https://api.community.brainjot.space').replace(/\/+$/, '');
+    const tokenRes = await apiInstance.get('/community/sso-token');
+    const token = tokenRes.data?.token;
+    if (!token) return;
+    await fetch(`${communityApi}/api/auth/sso-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ token }),
+    });
+  } catch { /* best-effort */ }
+}
+
 // Unified upload helper — uses presigned URL (browser→R2) when R2 is configured,
 // falls back to server-side multipart (disk mode) otherwise.
 // type: 'project' | 'task' | 'avatar'

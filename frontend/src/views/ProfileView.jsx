@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api, apiUpload } from '../api';
+import { api, apiUpload, syncCommunityIdentity } from '../api';
 import Avatar from '../components/Avatar';
 
 async function compressAvatar(file) {
@@ -154,6 +154,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
       setEditMsg('✓ Saved');
       setProfileData(prev => ({ ...prev, user: { ...prev.user, name: r.name || editName.trim() } }));
       onUserUpdate?.({ name: r.name || editName.trim() });
+      syncCommunityIdentity(); // community mirrors the display name too
     } else {
       setEditMsg(r?.error || 'Something went wrong');
     }
@@ -217,6 +218,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     if (r?.avatarUrl) {
       setProfileData(prev => ({ ...prev, user: { ...prev.user, avatarUrl: r.avatarUrl } }));
       onUserUpdate?.({ avatarUrl: r.avatarUrl });
+      syncCommunityIdentity(); // push the new avatar to the community right away
     } else {
       setAvatarMsg(r?.error || 'Upload failed — please try again');
     }
@@ -246,6 +248,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     if (r?.ok) {
       setProfileData(prev => ({ ...prev, user: { ...prev.user, username: r.username } }));
       onUserUpdate?.({ username: r.username });
+      syncCommunityIdentity(); // community profile URLs use the username
       setUnameVal('');
       setUnameStatus('idle');
     } else {
