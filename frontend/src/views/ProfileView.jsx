@@ -292,7 +292,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
         </button>
       </div>
 
-      <div style={{ maxWidth: '620px', margin: '0 auto', padding: '0 36px' }}>
+      <div style={{ maxWidth: '1320px', margin: '0 auto', padding: '0 36px' }}>
 
         {/* ── Hero ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '40px', marginTop: '8px' }}>
@@ -360,7 +360,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
 
         {/* ── Stats ── */}
         <Section title="Your Stats">
-          <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', alignItems: 'stretch' }}>
+          <div className="stats-grid">
             <StatCard label="PROJECTS"   value={stats.projectCount}   color="var(--accent)" />
             <StatCard label="SPACES"     value={stats.spaceCount}     color="var(--text)" />
             <StatCard label="FILES"      value={stats.fileCount}      color="#3b82f6" />
@@ -369,6 +369,9 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             <StatCard label="FEEDBACK"   value={stats.feedbackCount}  color="#ec4899" />
           </div>
         </Section>
+
+        <div className="profile-grid">
+        <div>
 
         {/* ── Set Username (first time only) ── */}
         {!user.username && (
@@ -499,6 +502,9 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
           </div>
         </Section>
 
+        </div>
+        <div>
+
         {/* ── Preferences ── */}
         <Section title="Preferences">
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '18px', padding: '22px' }}>
@@ -602,6 +608,9 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             )}
           </div>
         </Section>
+
+        </div>
+        </div>
 
       </div>
     </div>
