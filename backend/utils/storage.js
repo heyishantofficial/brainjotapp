@@ -77,7 +77,10 @@ async function getPresignedPutUrl(key, mimeType, expiresIn = 300) {
       hostname: host,
       protocol: 'https:',
       path: urlPath,
-      headers: { host },
+      // Presigned URLs must sign the literal UNSIGNED-PAYLOAD (the body is unknown
+      // at signing time) or S3/R2 rejects every upload with 403 SignatureDoesNotMatch.
+      // The signer hoists this header into the X-Amz-Content-Sha256 query param.
+      headers: { host, 'X-Amz-Content-Sha256': 'UNSIGNED-PAYLOAD' },
     },
     {
       expiresIn,
