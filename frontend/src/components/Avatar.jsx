@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 function hashColor(str) {
   const c = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'];
@@ -9,6 +9,7 @@ function hashColor(str) {
 
 export default function Avatar({ name = '', src = '', size = 36, style = {} }) {
   const [err, setErr] = useState(false);
+  useEffect(() => { setErr(false); }, [src]);
   const showImg = src && !err;
   const initials = (name || '?').split(' ').filter(Boolean).map(n => n[0]).join('').toUpperCase().slice(0, 2);
 

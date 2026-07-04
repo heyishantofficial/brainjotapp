@@ -1264,7 +1264,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'upload_avatar') {
     if (useR2) return res.status(400).json({ error: 'R2 mode: use get_upload_url + confirm_upload' });
     if (!req.file) { res.status(400).json({ error: 'No file received' }); return; }
-    const avatarUrl = filePublicUrl(`avatars/${userId}.jpg`);
+    // Same-key overwrite — version the URL so browsers refetch the new image
+    const avatarUrl = `${filePublicUrl(`avatars/${userId}.jpg`)}?v=${Date.now()}`;
     await User.updateOne({ id: userId }, { avatarUrl });
     res.json({ ok: true, avatarUrl });
     return;
@@ -1778,9 +1779,12 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const fe = { id: fileId, name: filename, file: fileKey, url: filePublicUrl(fileKey), type: ext, size: Number(size) || 0, uploaded: now() };
 
     if (type === 'avatar') {
-      await User.updateOne({ id: userId }, { avatarUrl: fe.url });
+      // The avatar always lives at the same key, so the URL must change on each
+      // upload or browsers/CDN keep serving the previous cached image
+      const avatarUrl = `${fe.url}?v=${Date.now()}`;
+      await User.updateOne({ id: userId }, { avatarUrl });
       logger.info({ userId, fileKey }, '[upload] avatar confirmed');
-      return res.json({ ok: true, avatarUrl: fe.url });
+      return res.json({ ok: true, avatarUrl });
     }
     if (type === 'task') {
       if (!projectId || !taskId) return res.status(400).json({ error: 'projectId and taskId required' });

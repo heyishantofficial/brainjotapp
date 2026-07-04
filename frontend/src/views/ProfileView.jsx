@@ -15,8 +15,9 @@ async function compressAvatar(file) {
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      canvas.toBlob(blob => resolve(new File([blob], 'avatar.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.78);
+      canvas.toBlob(blob => resolve(blob ? new File([blob], 'avatar.jpg', { type: 'image/jpeg' }) : null), 'image/jpeg', 0.78);
     };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
   });
 }
@@ -101,6 +102,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const unameDebounce = useRef(null);
   const avatarInputRef = useRef(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarMsg, setAvatarMsg] = useState('');
 
   // change email (OTP-verified)
   const [emailChangeStep, setEmailChangeStep] = useState('idle'); // 'idle' | 'request' | 'verify'
@@ -203,11 +205,20 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
     const file = e.target.files?.[0];
     if (!file) return;
     setAvatarUploading(true);
+    setAvatarMsg('');
     const compressed = await compressAvatar(file);
+    if (!compressed) {
+      setAvatarMsg("Couldn't read that image — please use a JPG, PNG, WebP or GIF");
+      setAvatarUploading(false);
+      e.target.value = '';
+      return;
+    }
     const r = await apiUpload(compressed, { type: 'avatar' });
     if (r?.avatarUrl) {
       setProfileData(prev => ({ ...prev, user: { ...prev.user, avatarUrl: r.avatarUrl } }));
       onUserUpdate?.({ avatarUrl: r.avatarUrl });
+    } else {
+      setAvatarMsg(r?.error || 'Upload failed — please try again');
     }
     setAvatarUploading(false);
     e.target.value = '';
@@ -290,7 +301,14 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             onClick={() => avatarInputRef.current?.click()}
             title="Change profile picture"
           >
-            <Avatar name={user.name} src={user.avatarUrl} size={72} />
+            <Avatar name={user.name} src={user.avatarUrl} size={72} style={avatarUploading ? { opacity: 0.45, transition: 'opacity 0.2s' } : { transition: 'opacity 0.2s' }} />
+            {avatarUploading && (
+              <div style={{
+                position: 'absolute', inset: '-6px', borderRadius: '50%',
+                border: '3px solid var(--border)', borderTopColor: 'var(--accent)',
+                animation: 'bj-spin 0.7s linear infinite', pointerEvents: 'none',
+              }} />
+            )}
             <div style={{
               position: 'absolute', bottom: 0, right: 0,
               width: '22px', height: '22px', borderRadius: '50%',
@@ -314,6 +332,9 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
             )}
             <div style={{ fontSize: '14px', color: 'var(--muted)', marginTop: '3px' }}>{user.email}</div>
             <div style={{ fontSize: '12px', color: 'var(--faint)', marginTop: '3px' }}>Member since {fmt(user.createdAt)}</div>
+            {avatarMsg && (
+              <div style={{ fontSize: '12px', color: '#ef4444', fontWeight: '600', marginTop: '4px' }}>{avatarMsg}</div>
+            )}
           </div>
         </div>
 
