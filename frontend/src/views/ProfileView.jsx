@@ -292,7 +292,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
         </button>
       </div>
 
-      <div style={{ maxWidth: '620px', padding: '0 36px' }}>
+      <div style={{ maxWidth: '620px', margin: '0 auto', padding: '0 36px' }}>
 
         {/* ── Hero ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '40px', marginTop: '8px' }}>
@@ -360,7 +360,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
 
         {/* ── Stats ── */}
         <Section title="Your Stats">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', alignItems: 'stretch' }}>
+          <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', alignItems: 'stretch' }}>
             <StatCard label="PROJECTS"   value={stats.projectCount}   color="var(--accent)" />
             <StatCard label="SPACES"     value={stats.spaceCount}     color="var(--text)" />
             <StatCard label="FILES"      value={stats.fileCount}      color="#3b82f6" />

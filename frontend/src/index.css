@@ -1023,6 +1023,10 @@ body.theme-light .task-date-input::-webkit-calendar-picker-indicator{filter:none
   .proj-card-foot {
     padding: 12px 20px 20px !important;
   }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
 }
 
 /* ── COLLAB MODAL REDESIGN ────────────────────────────────────────── */
