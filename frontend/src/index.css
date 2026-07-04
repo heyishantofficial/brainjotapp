@@ -1452,3 +1452,69 @@ body.theme-light .task-date-input::-webkit-calendar-picker-indicator{filter:none
   80% { transform: scale(1); opacity: 1; }
   100% { transform: scale(0.8) translateY(-50px); opacity: 0; }
 }
+
+/* ── TASK VIEW SWITCHER ── */
+.view-switch-btn{display:flex;align-items:center;gap:5px;background:transparent;border:0.5px solid var(--border2);border-radius:8px;padding:4px 10px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-body);transition:all .15s}
+.view-switch-btn:hover{background:var(--surface2);color:var(--text)}
+.view-switch-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--surface2);border:0.5px solid var(--border2);border-radius:12px;padding:5px;z-index:60;min-width:140px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.view-switch-item{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;border-radius:8px;padding:7px 10px;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;text-align:left;font-family:var(--font-body);transition:all .15s}
+.view-switch-item:hover{background:var(--surface3);color:var(--text)}
+.view-switch-item.active{background:var(--surface3);color:var(--text)}
+
+/* ── BOARD VIEW ── */
+.board-wrap{display:flex;gap:10px;padding:12px 16px;overflow-x:auto;align-items:flex-start}
+.board-col{flex:1;min-width:185px;background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius-sm);display:flex;flex-direction:column;max-height:560px;transition:border-color .15s,background .15s}
+.board-col.drag-over{border-color:var(--accent);background:var(--surface3)}
+.board-col-head{display:flex;align-items:center;gap:6px;padding:10px 12px;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-bottom:0.5px solid var(--border);flex-shrink:0}
+.board-col-count{margin-left:auto;color:var(--faint);font-weight:700}
+.board-col-body{padding:8px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.board-card{background:var(--surface);border:0.5px solid var(--border2);border-radius:12px;padding:10px 12px;cursor:pointer;transition:transform .12s,box-shadow .15s}
+.board-card:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.board-card.done .board-card-text{text-decoration:line-through;color:var(--faint)}
+.board-card-text{font-size:14px;font-weight:600;line-height:1.35;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.board-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
+.board-empty-hint{border:1px dashed var(--border2);border-radius:10px;padding:14px 8px;text-align:center;font-size:12px;color:var(--faint)}
+@media(max-width:640px){.board-wrap{padding:10px 12px}.board-col{min-width:165px}}
+
+/* ── CALENDAR VIEW ── */
+.cal-wrap{padding:12px 16px}
+.cal-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.cal-title{font-family:var(--font-head);font-size:16px;font-weight:800;letter-spacing:-.3px;min-width:135px;text-align:center}
+.cal-nav-btn{background:transparent;border:0.5px solid var(--border2);border-radius:8px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;transition:all .15s}
+.cal-nav-btn:hover{background:var(--surface2);color:var(--text)}
+.cal-today-btn{margin-left:auto;background:transparent;border:0.5px solid var(--border2);border-radius:8px;padding:4px 12px;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-body);transition:all .15s}
+.cal-today-btn:hover{background:var(--surface2);color:var(--text)}
+.cal-weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.cal-weekday{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);text-align:center;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-cell{background:var(--surface2);border:0.5px solid var(--border);border-radius:10px;min-height:86px;padding:5px;cursor:pointer;display:flex;flex-direction:column;gap:3px;min-width:0;transition:border-color .15s,background .15s}
+.cal-cell:hover{border-color:var(--border2)}
+.cal-cell.outside{opacity:.38}
+.cal-cell.selected{border-color:var(--accent)}
+.cal-cell.drag-over{border-color:var(--accent);background:var(--surface3)}
+.cal-day-num{font-size:11px;font-weight:700;color:var(--muted);width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:50%;flex-shrink:0}
+.cal-cell.today .cal-day-num{background:var(--accent);color:#000}
+.cal-chips{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cal-chip{font-size:10.5px;font-weight:600;line-height:1.25;padding:2px 6px;border-radius:6px;background:var(--surface3);border:0.5px solid var(--border);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:grab}
+.cal-chip:active{cursor:grabbing}
+.cal-chip.overdue{color:#ff4c4c;border-color:rgba(255,76,76,.35);background:rgba(255,76,76,.08)}
+.cal-chip.due-today{color:#ffb347;border-color:rgba(255,179,71,.35);background:rgba(255,179,71,.08)}
+.cal-chip.done{color:var(--faint);text-decoration:line-through}
+.cal-more{font-size:10px;font-weight:700;color:var(--faint);padding:0 6px;background:none;border:none;cursor:pointer;text-align:left;font-family:var(--font-body)}
+.cal-more:hover{color:var(--text)}
+.cal-dots{display:none;gap:3px;flex-wrap:wrap;padding:2px}
+.cal-dot{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.cal-dot.overdue{background:#ff4c4c}
+.cal-dot.due-today{background:#ffb347}
+.cal-dot.done{background:var(--faint)}
+.cal-day-panel{margin-top:10px;background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px}
+.cal-day-panel-title{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.cal-day-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer;font-size:13.5px;font-weight:600;transition:background .15s}
+.cal-day-row:hover{background:var(--surface3)}
+.cal-day-row.done{color:var(--faint);text-decoration:line-through}
+.cal-hint{margin-top:8px;font-size:11px;color:var(--faint)}
+@media(max-width:640px){
+  .cal-cell{min-height:52px}
+  .cal-chips,.cal-more{display:none}
+  .cal-dots{display:flex}
+}

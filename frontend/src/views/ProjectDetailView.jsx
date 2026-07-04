@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Search, MessageSquarePlus } from 'lucide-react';
+import { Bell, Search, MessageSquarePlus, ChevronDown, LayoutList, SquareKanban, Calendar } from 'lucide-react';
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
 import { api, apiForm, apiUpload, apiUrl } from '../api';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
+import TaskBoard from '../components/TaskBoard';
+import TaskCalendar from '../components/TaskCalendar';
 import ActivityFeed from '../components/ActivityFeed';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CountUp } from '../components/ProjectCard';
@@ -12,7 +14,11 @@ import ConfettiCelebration from '../components/ConfettiCelebration';
 import ProjectModal from '../components/ProjectModal';
 import DOMPurify from 'dompurify';
 
-
+const VIEW_OPTIONS = [
+  { key: 'list', label: 'List', Icon: LayoutList },
+  { key: 'board', label: 'Board', Icon: SquareKanban },
+  { key: 'calendar', label: 'Calendar', Icon: Calendar },
+];
 
 export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, onJoinInvitedCall, callRequestSent = false, isInCall = false, onDismissCallBanner }) {
   const [newTaskText, setNewTaskText] = useState('');
@@ -27,6 +33,10 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [sortBy, setSortBy] = useState('default');
   const [labelFilter, setLabelFilter] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem(`bj_view_${project.id}`) || 'list');
+  const [showViewMenu, setShowViewMenu] = useState(false);
+  // Internal highlight target for "jump to list" from Board/Calendar
+  const [focusTaskId, setFocusTaskId] = useState(null);
   // localTasks shadows project.tasks for shared-view optimistic updates
   // (avoids direct prop mutation which violates React immutability)
   const [localTasks, setLocalTasks] = useState(project.tasks || []);
@@ -37,11 +47,41 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     setLocalTasks(project.tasks || []);
   }, [project.tasks]);
 
+  // Each project remembers its own view mode; reload it when switching projects
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setViewMode(localStorage.getItem(`bj_view_${project.id}`) || 'list');
+  }, [project.id]);
+
   const notesTimerRef = useRef(null);
   const fileInputRef = useRef(null);
   const richNotesRef = useRef(null);
   const lastServerRichNotes = useRef(null);
   const addTaskInputRef = useRef(null);
+  const viewMenuRef = useRef(null);
+  const focusTimerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(event.target)) setShowViewMenu(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const changeViewMode = (mode) => {
+    setViewMode(mode);
+    setShowViewMenu(false);
+    try { localStorage.setItem(`bj_view_${project.id}`, mode); } catch { /* storage unavailable */ }
+  };
+
+  // Board cards and calendar chips open their task in the list view
+  const jumpToTask = (taskId) => {
+    changeViewMode('list');
+    setFocusTaskId(taskId);
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => setFocusTaskId(null), 2000);
+  };
 
   const priorityWeight = { urgent: 3, important: 2, later: 1 };
 
@@ -528,6 +568,33 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             <div className="section-head">
               <span className="section-head-title">Tasks</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ position: 'relative' }} ref={viewMenuRef}>
+                  <button className="view-switch-btn" onClick={() => setShowViewMenu(v => !v)} title="Change view">
+                    {(() => {
+                      const active = VIEW_OPTIONS.find(o => o.key === viewMode) || VIEW_OPTIONS[0];
+                      const ActiveIcon = active.Icon;
+                      return (<><ActiveIcon size={13} strokeWidth={2.5} />{active.label}</>);
+                    })()}
+                    <ChevronDown size={12} strokeWidth={2.5} style={{ opacity: 0.6 }} />
+                  </button>
+                  {showViewMenu && (
+                    <div className="view-switch-menu">
+                      {VIEW_OPTIONS.map(opt => {
+                        const OptIcon = opt.Icon;
+                        return (
+                          <button
+                            key={opt.key}
+                            className={`view-switch-item ${viewMode === opt.key ? 'active' : ''}`}
+                            onClick={() => changeViewMode(opt.key)}
+                          >
+                            <OptIcon size={14} strokeWidth={2.5} />
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <span style={{ fontSize: '11px', color: 'var(--faint)' }}>{project.tasks?.length || 0} total</span>
                 <button
                   onClick={() => setShowFilters(!showFilters)}
@@ -633,6 +700,29 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               )}
             </AnimatePresence>
 
+            {viewMode === 'board' && (
+              <TaskBoard
+                tasks={processedTasks}
+                project={project}
+                collaborators={mentionUsers}
+                currentUser={currentUser}
+                onToggle={toggleTask}
+                onUpdateMeta={(taskId, field, val) => updateTaskMeta(taskId, field, val)}
+                onTaskClick={jumpToTask}
+                readOnly={isSharedView && currentUserRole === 'viewer'}
+              />
+            )}
+
+            {viewMode === 'calendar' && (
+              <TaskCalendar
+                tasks={processedTasks}
+                onUpdateMeta={(taskId, field, val) => updateTaskMeta(taskId, field, val)}
+                onTaskClick={jumpToTask}
+                readOnly={isSharedView && currentUserRole === 'viewer'}
+              />
+            )}
+
+            {viewMode === 'list' && (
             <div id="tasks-list">
               {processedTasks.filter(t => !t.done).length === 0 && (processedTasks.length === 0 || hideCompleted) ? (
                 <div style={{
@@ -669,7 +759,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       onUploadComplete={onUpdate}
                       onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                       onOpenLightbox={onOpenLightbox}
-                      highlighted={highlightedTaskId === t.id}
+                      highlighted={highlightedTaskId === t.id || focusTaskId === t.id}
                       readOnly={isSharedView && currentUserRole === 'viewer'}
                       currentUser={currentUser}
                       collaborators={mentionUsers}
@@ -679,6 +769,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               </AnimatePresence>
               )}
             </div>
+            )}
 
             {(!isSharedView || currentUserRole === 'editor') && (
               <div className="add-row">
@@ -694,7 +785,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               </div>
             )}
 
-            {processedTasks.some(t => t.done) && (
+            {viewMode === 'list' && processedTasks.some(t => t.done) && (
               <>
                 <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--faint)', letterSpacing: '.08em', textTransform: 'uppercase', padding: '12px 12px 4px' }}>Completed</div>
                 <div id="tasks-list-done">
@@ -718,7 +809,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           onUploadComplete={onUpdate}
                           onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                           onOpenLightbox={onOpenLightbox}
-                          highlighted={highlightedTaskId === t.id}
+                          highlighted={highlightedTaskId === t.id || focusTaskId === t.id}
                           readOnly={isSharedView && currentUserRole === 'viewer'}
                           currentUser={currentUser}
                           collaborators={mentionUsers}
