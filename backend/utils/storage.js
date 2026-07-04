@@ -7,7 +7,17 @@ const logger = require('./logger');
 
 const UPLOADS_DIR = path.resolve(__dirname, '..', process.env.UPLOADS_DIR || 'uploads');
 
-const R2_ACCOUNT_ID        = (process.env.R2_ACCOUNT_ID        || '').trim();
+// The account ID must be the bare 32-hex-char ID — if a full S3 endpoint URL was
+// pasted into the env var, extract the ID so the built hostname stays valid
+// (a malformed hostname fails TLS with ERR_SSL_VERSION_OR_CIPHER_MISMATCH)
+function normalizeAccountId(raw) {
+  return raw
+    .replace(/^https?:\/\//i, '')
+    .replace(/\.?r2\.cloudflarestorage\.com.*$/i, '')
+    .replace(/[/?#].*$/, '')
+    .trim();
+}
+const R2_ACCOUNT_ID        = normalizeAccountId((process.env.R2_ACCOUNT_ID || '').trim());
 const R2_ACCESS_KEY_ID     = (process.env.R2_ACCESS_KEY_ID     || '').trim();
 const R2_SECRET_ACCESS_KEY = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
 const R2_BUCKET_NAME       = (process.env.R2_BUCKET_NAME       || '').trim();
@@ -30,6 +40,9 @@ if (useR2) {
     bucket: R2_BUCKET_NAME,
     mode: 'presigned-url (browser-direct)',
   }, '[storage] R2 configured');
+  if (!/^[0-9a-f]{32}(\.eu)?$/i.test(R2_ACCOUNT_ID)) {
+    logger.warn({ accountIdPrefix: R2_ACCOUNT_ID.slice(0, 8) }, '[storage] R2_ACCOUNT_ID does not look like a valid Cloudflare account ID (expected 32 hex chars) — uploads will fail TLS');
+  }
 }
 
 // SHA-256 backed by Node.js built-in crypto — required by @smithy/signature-v4
