@@ -13,7 +13,7 @@
     "@formkit/auto-animate": "^0.9.0",
     "axios": "^1.15.0",
     "dompurify": "^3.4.2",
-    "framer-motion": "^12.38.0",
+    "framer-motion": "^12.42.2",
     "livekit-client": "^2.0.0",
     "lucide-react": "^1.8.0",
     "posthog-js": "^1.396.6",
