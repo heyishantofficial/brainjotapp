@@ -80,6 +80,48 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
 const FROM_EMAIL = process.env.FROM_EMAIL || 'BrainJot <onboarding@resend.dev>';
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+// ── CSRF origin guard for high-impact, side-effecting actions ─────────────────
+// The session cookie is SameSite=None in production (the community app rides it
+// cross-site), and this API also parses urlencoded bodies — so a cross-site
+// <form> POST is a "simple request" that skips CORS preflight and still carries
+// the victim's cookie. That's exploitable for actions like send_collab_invite
+// (a forged invite grants the attacker collaborator access once accepted, or
+// floods a target's inbox). We can't rely on CORS to stop the request from
+// arriving, so we verify the browser-supplied Origin against the same allowlist
+// the CORS layer uses. A real cross-site attack always carries a foreign Origin;
+// legitimate callers (the app + community frontends) send an allowed one. When
+// no Origin header is present (server-to-server, some same-origin GETs) we allow
+// it — CSRF necessarily comes from a browser, which always sets Origin on
+// cross-site POSTs. Mirrors server.js's origin logic (kept local to avoid a
+// circular require between server.js and this router).
+const CSRF_VERCEL_PREVIEW_RE = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
+function buildTrustedOriginSet() {
+  const list = [
+    'http://localhost:5173', 'http://127.0.0.1:5173',
+    'http://localhost:5174', 'http://127.0.0.1:5174',
+    'https://brainjot.space', 'https://www.brainjot.space', 'https://app.brainjot.space',
+    'https://community.brainjot.space', 'https://brainjotapp-4edj.vercel.app',
+    process.env.MAIN_APP_URL, process.env.COMMUNITY_APP_URL,
+    process.env.APP_URL, process.env.FRONTEND_URL, process.env.CLIENT_URL, process.env.PUBLIC_APP_URL,
+    ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  ];
+  return new Set(list.filter(Boolean).map(o => o.replace(/\/+$/, '')));
+}
+const TRUSTED_ORIGINS = buildTrustedOriginSet();
+function isTrustedBrowserOrigin(req) {
+  const raw = req.headers.origin;
+  if (!raw) return true; // no browser Origin → not a cross-site form CSRF
+  const origin = raw.replace(/\/+$/, '');
+  if (TRUSTED_ORIGINS.has(origin)) return true;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== 'https:') return false;
+    if (hostname === 'brainjot.space' || hostname.endsWith('.brainjot.space')) return true;
+    if (CSRF_VERCEL_PREVIEW_RE.test(hostname)) return true;
+  } catch { /* malformed Origin → reject below */ }
+  return false;
+}
+
 async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTitle }) {
   if (!resend) {
     logger.warn({ to }, '[email] RESEND_API_KEY not configured — skipping invite');
@@ -242,6 +284,27 @@ function cloneTaskForDuplicate(task) {
   return { ...rest, id: 'task_' + uid(), files: [] };
 }
 
+// ── Activity feed ─────────────────────────────────────────────────
+// Task events live on the project doc itself so the feed ships with the
+// regular `get` payload — no extra endpoint or collection. Newest first,
+// capped so documents can't grow unbounded. Call before proj.save().
+const ACTIVITY_CAP = 50;
+async function logTaskActivity(proj, userId, type, data = {}) {
+  const actor = await User.findOne({ id: userId }).select('name avatarUrl -_id').lean();
+  proj.activity.unshift({
+    id: 'act_' + uid(),
+    type,
+    userId,
+    userName: actor?.name || 'Someone',
+    userAvatarUrl: actor?.avatarUrl || '',
+    taskId: data.taskId || '',
+    taskText: (data.taskText || '').slice(0, 120),
+    meta: data.meta || {},
+    createdAt: new Date(),
+  });
+  if (proj.activity.length > ACTIVITY_CAP) proj.activity.splice(ACTIVITY_CAP);
+}
+
 // ── Seed default data per user ────────────────────────────────────
 async function seedDefaultData(userId) {
   const spaceCount = await Space.countDocuments({ ownerId: userId });
@@ -382,11 +445,26 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// ── Community: my projects ────────────────────────────────────────
+// Powers the "Invite to project" dropdown in the community app's DMs: the
+// hirer picks one of their own projects and the invite goes out directly,
+// without a round-trip through the main app's UI. Owned projects only —
+// inviting requires ownership (send_collab_invite enforces the same).
+// Uses the main-app session cookie (SameSite=None), same as sso-token.
+router.get('/community/my-projects', apiLimiter, requireAuth, async (req, res) => {
+  const projects = await Project.find({ ownerId: req.session.userId })
+    .sort({ __orderRank: 1 })
+    .select('id title icon color -_id')
+    .lean();
+  res.json({ projects });
+});
+
 // ── Community SSO token ───────────────────────────────────────────
 // Mints a short-lived JWT that the standalone community app
-// (community.brainjot.space) verifies LOCALLY to start its own session. This is
-// the ONLY endpoint the community ever calls on the main app — at most once per
-// login — so the community carries its own traffic without loading this app.
+// (community.brainjot.space) verifies LOCALLY to start its own session.
+// Community→main-app calls are limited to this plus the two invite hooks
+// (/community/my-projects above and send_collab_invite by username) — the
+// community still carries its own traffic without loading this app.
 // Signed with COMMUNITY_JWT_SECRET, a secret shared only between the two backends.
 router.get('/community/sso-token', requireAuth, async (req, res) => {
   const secret = process.env.COMMUNITY_JWT_SECRET;
@@ -772,6 +850,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         
         const cleanEmail = email.toLowerCase().trim();
         let user = await User.findOne({ email: cleanEmail });
+        const isNewUser = !user;
         const role = ADMIN_EMAILS.includes(cleanEmail) ? 'superadmin' : 'user';
         
         if (!user) {
@@ -826,7 +905,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         req.session.userRole = user.role || 'user';
         
         logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] google_login_success');
-        res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
+        res.json({ ok: true, isNewUser, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {
         next(err);
       }
@@ -1538,7 +1617,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     logger.info({ userId, projectId, taskCount: proj.tasks.length }, '[audit] clear_project_tasks');
     for (const t of proj.tasks || []) { for (const f of t.files || []) await deleteStoredFile(f); }
+    const clearedCount = proj.tasks.length;
     proj.tasks = [];
+    if (clearedCount) await logTaskActivity(proj, userId, 'tasks_cleared', { meta: { count: clearedCount } });
     await proj.save();
     res.json({ ok: true });
     return;
@@ -1599,7 +1680,11 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
-    if (task) { task.done = !task.done; task.finishedAt = task.done ? new Date() : null; }
+    if (task) {
+      task.done = !task.done;
+      task.finishedAt = task.done ? new Date() : null;
+      await logTaskActivity(proj, userId, task.done ? 'task_completed' : 'task_reopened', { taskId, taskText: task.text });
+    }
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -1616,6 +1701,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const newId = 'task_' + uid();
     const safePriority = ['urgent', 'important', 'later'].includes(priority) ? priority : '';
     proj.tasks.push({ id: newId, text: text.trim().slice(0, 500), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: safePriority, comments: [] });
+    await logTaskActivity(proj, userId, 'task_added', { taskId: newId, taskText: text.trim() });
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, id: newId });
@@ -1629,7 +1715,11 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
-    if (task) task.text = text.trim().slice(0, 500);
+    if (task) {
+      const from = task.text;
+      task.text = text.trim().slice(0, 500);
+      if (task.text !== from) await logTaskActivity(proj, userId, 'task_renamed', { taskId, taskText: task.text, meta: { from: (from || '').slice(0, 120) } });
+    }
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -1645,11 +1735,28 @@ router.post('/', apiLimiter, async (req, res, next) => {
     let prevAssignees = [];
     if (task) {
       prevAssignees = [...(task.assignees || [])];
+      const prevDeadline = task.deadline;
+      const prevPriority = task.priority;
       if (deadline  !== undefined) task.deadline  = deadline.trim();
       if (assignee  !== undefined) task.assignee  = assignee.trim();
       if (assignees !== undefined) task.assignees = Array.isArray(assignees) ? assignees : [];
       if (priority  !== undefined) task.priority  = priority.trim();
       if (badge     !== undefined) task.badge     = badge;
+      if (deadline !== undefined && task.deadline !== prevDeadline) {
+        await logTaskActivity(proj, userId, task.deadline ? 'task_deadline' : 'task_deadline_removed', { taskId, taskText: task.text, meta: { deadline: task.deadline } });
+      }
+      if (priority !== undefined && task.priority !== prevPriority) {
+        await logTaskActivity(proj, userId, task.priority ? 'task_priority' : 'task_priority_removed', { taskId, taskText: task.text, meta: { priority: task.priority } });
+      }
+      if (assignees !== undefined && JSON.stringify([...prevAssignees].sort()) !== JSON.stringify([...task.assignees].sort())) {
+        // Resolve collaborator ids to names where possible ('me' = the owner, no collab entry)
+        const prevSet = new Set(prevAssignees);
+        const assignedNames = task.assignees
+          .filter(a => !prevSet.has(a))
+          .map(a => proj.collaborators.find(c => c.id === a)?.name)
+          .filter(Boolean);
+        await logTaskActivity(proj, userId, 'task_assignees', { taskId, taskText: task.text, meta: { assignedNames } });
+      }
     }
     await proj.save();
     // Notify newly assigned users
@@ -1686,7 +1793,9 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const tIdx = proj.tasks.findIndex(t => t.id === taskId);
     if (tIdx > -1) {
       for (const f of proj.tasks[tIdx].files || []) await deleteStoredFile(f);
+      const deletedText = proj.tasks[tIdx].text;
       proj.tasks.splice(tIdx, 1);
+      await logTaskActivity(proj, userId, 'task_deleted', { taskId, taskText: deletedText });
       await proj.save();
     }
     emitProjectUpdate(req, projectId);
@@ -1716,6 +1825,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
       notes: '', richNotes: '', files: [],
     };
     proj.tasks.push(safeTask);
+    await logTaskActivity(proj, userId, 'task_restored', { taskId: safeTask.id, taskText: safeTask.text });
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
@@ -1980,14 +2090,27 @@ router.post('/', apiLimiter, async (req, res, next) => {
   }
 
   // ── send_collab_invite ──
+  // Accepts the invitee as `email` (main-app UI) OR `username` (the community
+  // app's DM invite dropdown — it knows handles, never emails). A username is
+  // resolved to the registered user's email here, server-side, so the email
+  // address is never exposed to the community frontend.
   if (action === 'send_collab_invite') {
-    const { email, entityId, entityType, role } = req.body;
-    if (!email || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
+    // CSRF guard: reject forged cross-site form posts (see isTrustedBrowserOrigin).
+    if (!isTrustedBrowserOrigin(req)) { res.status(403).json({ error: 'Cross-origin request rejected' }); return; }
+    const { email, username, entityId, entityType, role } = req.body;
+    if ((!email && !username) || !entityId || !entityType || !role) { res.status(400).json({ error: 'Missing fields' }); return; }
     if (!['project', 'space'].includes(entityType)) { res.status(400).json({ error: 'Invalid entity type' }); return; }
     if (!VALID_COLLAB_ROLES.includes(role)) { res.status(400).json({ error: 'Invalid role' }); return; }
-    const cleanEmail = email.toLowerCase().trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { res.status(400).json({ error: 'Invalid email address' }); return; }
-    
+    let cleanEmail;
+    if (email) {
+      cleanEmail = email.toLowerCase().trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) { res.status(400).json({ error: 'Invalid email address' }); return; }
+    } else {
+      const byUsername = await User.findOne({ username: String(username).toLowerCase().trim() }).select('email -_id');
+      if (!byUsername || !byUsername.email) { res.status(404).json({ error: 'User not found' }); return; }
+      cleanEmail = byUsername.email.toLowerCase();
+    }
+
     let entityTitle = '';
     let collaborators = [];
     let ownerId = '';
@@ -2012,7 +2135,20 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (target && target.id === userId) { res.status(400).json({ error: 'Cannot invite yourself' }); return; }
     if (target && collaborators.some(c => c.userId === target.id)) { res.status(409).json({ error: 'User is already a collaborator' }); return; }
     if (!target && collaborators.some(c => c.email.toLowerCase() === cleanEmail)) { res.status(409).json({ error: 'User is already invited' }); return; }
-    
+
+    // Anti-email-bomb: an invite email + Invite token already sent for this
+    // (email, entity) pair means we DON'T fire another. Without this, repeatedly
+    // calling send_collab_invite for the same target re-sends the email every
+    // time (only the in-app notification was deduped) — up to the apiLimiter's
+    // 500/15min, i.e. an inbox-flooding vector. Invites auto-expire in 30 days,
+    // so a genuine re-invite works again once the old one lapses. Idempotent
+    // success (not 409) so the one-click community dropdown reads as "Sent".
+    const pendingInvite = await Invite.findOne({ email: cleanEmail, entityId, entityType }).select('_id -_id').lean();
+    if (pendingInvite) {
+      res.json({ ok: true, alreadyInvited: true, invitedName: target?.name || cleanEmail });
+      return;
+    }
+
     // Generate unique Invite token
     const token = crypto.randomBytes(16).toString('hex');
     await Invite.create({

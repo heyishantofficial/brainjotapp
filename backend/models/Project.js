@@ -27,6 +27,20 @@ const collaboratorSchema = new mongoose.Schema({
   avatarUrl: String,
 }, { _id: false });
 
+// Task activity feed entries — newest first, capped in routes/api.js (logTaskActivity).
+// Actor name/avatar are denormalized so entries survive a collaborator leaving.
+const activitySchema = new mongoose.Schema({
+  id: String,
+  type: String,
+  userId: String,
+  userName: String,
+  userAvatarUrl: { type: String, default: '' },
+  taskId: { type: String, default: '' },
+  taskText: { type: String, default: '' },
+  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
+  createdAt: { type: Date, default: Date.now },
+}, { _id: false });
+
 const taskSchema = new mongoose.Schema({
   id: String,
   text: String,
@@ -65,6 +79,7 @@ const projectSchema = new mongoose.Schema({
   files: [fileSchema],
   collaborators: [collaboratorSchema],
   labels: [labelSchema],
+  activity: [activitySchema],
   archived: { type: Boolean, default: false },
   spaceId: { type: String, default: '' },
   ownerId: { type: String, index: true },
