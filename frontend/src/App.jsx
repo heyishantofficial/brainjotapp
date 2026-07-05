@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io as socketIO } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion';
 import { API_ORIGIN, api } from './api';
+import { identifyUser, resetAnalytics, track } from './analytics';
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
 import DashboardView from './views/DashboardView';
@@ -282,6 +283,7 @@ export default function App() {
       if (r.loggedIn) {
         setLoggedIn(true);
         setCurrentUser(r.user);
+        identifyUser(r.user);
         setLivekitEnabled(r.features?.livekit === true);
         loadData();
         loadNotifications();
@@ -345,6 +347,8 @@ export default function App() {
 
   const handleLogout = async () => {
     stopDeadlineReminders();
+    track('logged_out');
+    resetAnalytics();
     await api('logout');
     // Clear all SW caches so stale authenticated data isn't served to the next user on this browser
     if ('caches' in window) {
@@ -467,6 +471,7 @@ export default function App() {
     return <LoginScreen googleClientId={googleClientId} onLoginSuccess={(user) => {
       setLoggedIn(true);
       setCurrentUser(user);
+      identifyUser(user);
       loadData();
       loadNotifications();
       requestNotificationPermission();
@@ -485,6 +490,7 @@ export default function App() {
     return <LoginScreen googleClientId={googleClientId} onLoginSuccess={(user) => {
       setLoggedIn(true);
       setCurrentUser(user);
+      identifyUser(user);
       loadData();
       loadNotifications();
       requestNotificationPermission();

@@ -5,14 +5,17 @@ import './index.css'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import PWAUpdatePrompt from './components/PWAUpdatePrompt.jsx'
 import { onCLS, onINP, onLCP, onFCP, onTTFB } from 'web-vitals'
+import { initAnalytics, trackWebVital } from './analytics.js'
+
+initAnalytics()
 
 // ── Web Vitals ────────────────────────────────────────────────────
-// Reports Core Web Vitals to the console in a structured format.
-// Hook point: replace console.info with Sentry.setMeasurement or a
-// custom analytics beacon once an external service is configured.
-function reportWebVital({ name, value, rating, id }) {
+// Reports Core Web Vitals to the console and to PostHog (no-op when
+// analytics is not configured).
+function reportWebVital(metric) {
+  const { name, value, rating, id } = metric
   console.info('[web-vital]', { name, value: +value.toFixed(1), rating, id })
-  // Hook point: Sentry.setMeasurement(name, value, name === 'CLS' ? '' : 'millisecond')
+  trackWebVital(metric)
 }
 onCLS(reportWebVital)
 onINP(reportWebVital)

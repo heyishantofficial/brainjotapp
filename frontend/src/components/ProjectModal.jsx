@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { track } from '../analytics';
 
 const COLORS = ['#D4FF32','#FF5B37','#FF9BE6','#A1E6FF','#B882FF','#00FF9D','#FFD166','#FF6B6B'];
 const COLOR_NAMES = { '#D4FF32': 'Lime', '#FF5B37': 'Orange', '#FF9BE6': 'Pink', '#A1E6FF': 'Sky blue', '#B882FF': 'Purple', '#00FF9D': 'Mint', '#FFD166': 'Yellow', '#FF6B6B': 'Coral' };
@@ -58,7 +59,7 @@ export default function ProjectModal({ onClose, onSuccess, project = null, space
         color: selectedColor,
         spaceId,
       });
-      if (r.ok) onSuccess(r.id);
+      if (r.ok) { track('project_created', { in_space: !!spaceId }); onSuccess(r.id); }
     }
   };
 

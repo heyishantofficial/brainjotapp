@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { track } from '../analytics';
 import { getContrastColor } from '../utils/colors';
 
 export function CountUp({ value }) {
@@ -44,6 +45,7 @@ export default function ProjectCard({ p, onOpenProject, onReorder, projectProgre
     try {
       if (p.sharedBy) { setQuickTaskText(''); onReorder(); return; }
       await api('add_task', { projectId: p.id, text: quickTaskText });
+      track('task_created', { source: 'quick_add_card' });
       setQuickTaskText('');
       onReorder();
     } catch (err) {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { track } from '../analytics';
 
 const TAGLINES = [
   "Your brain, but actually organized.",
@@ -82,7 +83,10 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     setLoading(true); setError('');
     try {
       const r = await api('google_auth', { credential: response.credential, consentGiven: true });
-      if (r.ok) onLoginSuccess(r.user);
+      if (r.ok) {
+        track(r.isNewUser ? 'signed_up' : 'logged_in', { method: 'google' });
+        onLoginSuccess(r.user);
+      }
       else setError(r.error || 'Google Authentication failed');
     } catch { setError('Failed to connect to server'); }
     finally { setLoading(false); }
@@ -121,7 +125,10 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     try {
       const r = await api('verify_otp', { email, otp });
       if (r.ok) {
-        if (r.exists) onLoginSuccess(r.user);
+        if (r.exists) {
+          track('logged_in', { method: 'otp' });
+          onLoginSuccess(r.user);
+        }
         else setEmailExists(false);
       } else setError(r.error || 'Invalid or expired code');
     } catch { setError('Failed to connect to server'); }
@@ -135,7 +142,10 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     setLoading(true); setError('');
     try {
       const r = await api('register_otp', { email, name, username, otp, consentGiven: true });
-      if (r.ok) onLoginSuccess(r.user);
+      if (r.ok) {
+        track('signed_up', { method: 'email_otp' });
+        onLoginSuccess(r.user);
+      }
       else setError(r.error || 'Registration failed');
     } catch { setError('Failed to connect to server'); }
     finally { setLoading(false); }
@@ -152,7 +162,10 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
     setLoading(true);
     try {
       const r = await api('login', { email, password });
-      if (r.ok) onLoginSuccess(r.user);
+      if (r.ok) {
+        track('logged_in', { method: 'password' });
+        onLoginSuccess(r.user);
+      }
       else setError(r.error || 'Invalid email or password.');
     } finally { setLoading(false); }
   };

@@ -3,6 +3,7 @@ import { Bell, Search, MessageSquarePlus, ChevronDown, LayoutList, SquareKanban,
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
 import { api, apiForm, apiUpload, apiUrl } from '../api';
+import { track } from '../analytics';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
 import TaskBoard from '../components/TaskBoard';
@@ -70,6 +71,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   }, []);
 
   const changeViewMode = (mode) => {
+    if (mode !== viewMode) track('view_switched', { view: mode });
     setViewMode(mode);
     setShowViewMenu(false);
     try { localStorage.setItem(`bj_view_${project.id}`, mode); } catch { /* storage unavailable */ }
@@ -190,6 +192,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     }
 
     await api('add_task', { projectId: project.id, text: newTaskText });
+    track('task_created', { source: 'list_view' });
     setNewTaskText('');
     onUpdate();
   };
@@ -203,6 +206,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       return;
     }
     await api('add_task', { projectId: project.id, text, priority });
+    track('task_created', { source: 'board_view' });
     onUpdate();
   };
 
@@ -952,7 +956,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               <span style={{ fontSize: '11px', color: 'var(--faint)' }}>Recent changes</span>
             </div>
             <div className="section-body">
-              <ActivityFeed project={project} collaborators={project.collaborators || []} />
+              <ActivityFeed project={project} currentUser={currentUser} />
             </div>
           </div>
         </div>

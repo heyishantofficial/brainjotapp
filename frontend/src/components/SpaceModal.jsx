@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
+import { track } from '../analytics';
 
 const SPACE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#06b6d4', '#6366f1'];
 const SPACE_ICONS  = ['📁', '💼', '🏠', '📚', '🎨', '🔬', '💡', '🚀', '🎯', '🌱', '⚡', '🛠️', '🎵', '🏋️', '✈️', '💰'];
@@ -20,7 +21,7 @@ export default function SpaceModal({ onClose, onSuccess, space = null }) {
       if (r.ok) onSuccess();
     } else {
       const r = await api('add_space', { title: title.trim(), icon, color, description });
-      if (r.ok) onSuccess(r.id);
+      if (r.ok) { track('space_created'); onSuccess(r.id); }
     }
   };
 
