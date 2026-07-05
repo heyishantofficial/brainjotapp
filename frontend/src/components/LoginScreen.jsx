@@ -35,6 +35,10 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const debounceRef = useRef(null);
+  // Google's SDK captures the credential callback once at init, so it would
+  // otherwise see a stale googleConsentGiven — mirror it in a ref instead.
+  const googleConsentRef = useRef(false);
+  useEffect(() => { googleConsentRef.current = googleConsentGiven; }, [googleConsentGiven]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -76,7 +80,7 @@ export default function LoginScreen({ onLoginSuccess, googleClientId, onOpenPriv
 
   const handleGoogleCredentialResponse = async (response) => {
     // F6: consent must be given before a new account can be created
-    if (!googleConsentGiven) {
+    if (!googleConsentRef.current) {
       setError('Please tick the box below to agree to our Terms & Privacy Policy before signing in with Google.');
       return;
     }
