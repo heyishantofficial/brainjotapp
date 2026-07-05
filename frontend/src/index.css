@@ -1474,6 +1474,16 @@ body.theme-light .task-date-input::-webkit-calendar-picker-indicator{filter:none
 .board-card-text{font-size:14px;font-weight:600;line-height:1.35;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .board-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
 .board-empty-hint{border:1px dashed var(--border2);border-radius:10px;padding:14px 8px;text-align:center;font-size:12px;color:var(--faint)}
+.board-add-btn{display:flex;align-items:center;gap:5px;width:100%;background:none;border:none;border-radius:8px;padding:7px 8px;color:var(--faint);font-size:12px;font-weight:700;cursor:pointer;text-align:left;font-family:var(--font-body);transition:all .15s}
+.board-add-btn:hover{color:var(--text);background:var(--surface3)}
+.board-add-input{width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:8px 10px;color:var(--text);font-family:var(--font-body);font-size:13px;outline:none}
+.board-add-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:6px}
+.board-add-cancel{background:none;border:none;padding:5px 10px;border-radius:8px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font-body)}
+.board-add-cancel:hover{color:var(--text)}
+.board-add-save{background:var(--accent);border:none;padding:5px 12px;border-radius:8px;color:#000;font-size:11px;font-weight:800;cursor:pointer;font-family:var(--font-body)}
+.board-trash{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:120;display:flex;align-items:center;gap:9px;padding:13px 24px;border-radius:16px;border:1.5px dashed var(--border2);background:var(--surface2);color:var(--muted);font-size:13px;font-weight:700;font-family:var(--font-body);box-shadow:0 12px 40px rgba(0,0,0,.4);animation:board-trash-in .18s ease}
+.board-trash.active{border-color:#ff4c4c;background:rgba(255,76,76,.14);color:#ff4c4c}
+@keyframes board-trash-in{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 @media(max-width:640px){.board-wrap{padding:10px 12px}.board-col{min-width:165px}}
 
 /* ── CALENDAR VIEW ── */

@@ -1608,13 +1608,14 @@ router.post('/', apiLimiter, async (req, res, next) => {
 
   // ── add_task ──
   if (action === 'add_task') {
-    const { projectId, text } = req.body;
+    const { projectId, text, priority } = req.body;
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
     const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     if (proj.tasks.length >= 1000) { res.status(429).json({ error: 'Task limit reached (1000 per project)' }); return; }
     const newId = 'task_' + uid();
-    proj.tasks.push({ id: newId, text: text.trim().slice(0, 500), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: '', comments: [] });
+    const safePriority = ['urgent', 'important', 'later'].includes(priority) ? priority : '';
+    proj.tasks.push({ id: newId, text: text.trim().slice(0, 500), done: false, badge: 'Custom', notes: '', richNotes: '', files: [], deadline: '', assignee: '', assignees: [], priority: safePriority, comments: [] });
     await proj.save();
     emitProjectUpdate(req, projectId);
     res.json({ ok: true, id: newId });

@@ -194,6 +194,18 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     onUpdate();
   };
 
+  // Quick-add from a Board column: the new task lands with that column's priority
+  const addTaskFromBoard = async (text, priority) => {
+    if (isSharedView && currentUserRole !== 'editor') {
+      const newTask = { id: 'new-' + Date.now(), text, done: false, priority, createdAt: new Date().toISOString() };
+      setLocalTasks(prev => [newTask, ...prev]);
+      onUpdate();
+      return;
+    }
+    await api('add_task', { projectId: project.id, text, priority });
+    onUpdate();
+  };
+
 
 
   const handleInlineRichNotes = (e) => {
@@ -708,6 +720,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 currentUser={currentUser}
                 onToggle={toggleTask}
                 onUpdateMeta={(taskId, field, val) => updateTaskMeta(taskId, field, val)}
+                onAddTask={addTaskFromBoard}
+                onDelete={deleteTask}
                 onTaskClick={jumpToTask}
                 readOnly={isSharedView && currentUserRole === 'viewer'}
               />
