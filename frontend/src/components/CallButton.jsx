@@ -29,9 +29,9 @@ export default function CallButton({ project, onStartCall, hasActiveCall, isInCa
     if (disabled) return;
     if (!livekitEnabled) {
       if (onToast) {
-        onToast('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL in Railway to enable calls.');
+        onToast('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL on the server to enable calls.');
       } else {
-        alert('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL in Railway to enable calls.');
+        alert('Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL on the server to enable calls.');
       }
       return;
     }

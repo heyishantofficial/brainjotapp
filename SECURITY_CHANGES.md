@@ -379,7 +379,7 @@ Created a `ActiveCall` Mongoose model. All socket handlers and HTTP routes that 
 A 2-hour TTL index auto-deletes abandoned call records if the server crashes mid-call.
 
 **Before:** If the server restarted while a call was active, the call entry vanished from memory — the host's "End Call" button stopped working, the room stayed alive indefinitely in LiveKit.  
-**After:** Call state lives in MongoDB, survives restarts, and is visible to every Railway instance. Abandoned calls auto-clean after 2 hours.
+**After:** Call state lives in MongoDB, survives restarts, and is visible to every server instance. Abandoned calls auto-clean after 2 hours.
 
 ---
 
@@ -401,9 +401,9 @@ Added a `MongoRateLimitStore` class that implements the `express-rate-limit` v8 
 Installed `@sentry/node`. Sentry initializes on startup only when `SENTRY_DSN` is set in environment variables. Replaced both `// Hook point: Sentry.captureException` stubs with real calls.
 
 **Before:** Unhandled errors and rejected promises were logged to stdout and silently lost. Nobody was notified when the server crashed.  
-**After:** Set `SENTRY_DSN` in Railway and every error immediately appears in your Sentry dashboard with a full stack trace, request context, and user ID.
+**After:** Set `SENTRY_DSN` in the server environment and every error immediately appears in your Sentry dashboard with a full stack trace, request context, and user ID.
 
-**To activate:** Sign up at sentry.io (free tier), create a Node.js project, copy the DSN, add `SENTRY_DSN=https://...` to Railway environment variables.
+**To activate:** Sign up at sentry.io (free tier), create a Node.js project, copy the DSN, add `SENTRY_DSN=https://...` to the backend's environment variables.
 
 ---
 
@@ -444,8 +444,8 @@ This cannot be done from application code. It requires the MongoDB Atlas dashboa
    - No admin, no Atlas admin, no cluster management
 4. Create a second user named `brainjot-readonly` (for future analytics/reporting use):
    - Role: **Only read any database** on the `brainjot` database
-5. Update the `MONGODB_URI` in Railway to use `brainjot-app` credentials
+5. Update the `MONGODB_URI` in the backend's environment to use `brainjot-app` credentials
 6. Delete or disable the old overprivileged user
-7. Go to **Network Access** → confirm only Railway's IP range is allowed (not `0.0.0.0/0`)
+7. Go to **Network Access** → confirm only the server's IP is allowed (not `0.0.0.0/0`)
 
 **Result:** Even if the connection string leaks, the attacker can only read/write data — they cannot drop collections, delete indexes, or access other databases on the cluster.

@@ -56,7 +56,7 @@ export default function PrivacyPolicyPage({ onBack }) {
                 ['Resend', 'Sending OTP and notification emails', 'Your email address'],
                 ['Sentry', 'Error tracking and crash reporting', 'Anonymized error logs, IP address'],
                 ['LiveKit', 'Audio/video calls within the app', 'Session tokens (no call content stored)'],
-                ['Railway / MongoDB', 'Database and app hosting', 'All account and content data'],
+                ['Hostinger / MongoDB', 'Database and app hosting', 'All account and content data'],
               ].map(([service, purpose, data]) => (
                 <tr key={service} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 0', fontWeight: '600' }}>{service}</td>
@@ -71,7 +71,7 @@ export default function PrivacyPolicyPage({ onBack }) {
 
         <Section title="5. Data Storage and Security">
           <ul>
-            <li>Your data is stored in MongoDB hosted on Railway infrastructure.</li>
+            <li>Your data is stored in MongoDB hosted on our own server infrastructure (Hostinger).</li>
             <li>Passwords are hashed using bcrypt — we never store plain-text passwords.</li>
             <li>Sessions are encrypted and expire after 7 days of inactivity.</li>
             <li>All traffic is encrypted in transit via HTTPS/TLS.</li>

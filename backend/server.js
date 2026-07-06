@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 // Sentry must be initialized before anything else so it can instrument all modules.
-// Set SENTRY_DSN in Railway environment variables to enable. Safe no-op when not set.
+// Set SENTRY_DSN in the server environment to enable. Safe no-op when not set.
 const Sentry = require('@sentry/node');
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -56,7 +56,6 @@ const defaultAllowedOrigins = [
   'https://www.brainjot.space',
   'https://app.brainjot.space',
   'https://community.brainjot.space', // community app calls /api/community/sso-token
-  'https://brainjotapp-4edj.vercel.app',
 ];
 
 const configuredOrigins = process.env.ALLOWED_ORIGINS
@@ -78,16 +77,6 @@ const ALLOWED_ORIGIN_PATTERNS = (process.env.ALLOWED_ORIGIN_PATTERNS || '')
   .map(pattern => pattern.trim())
   .filter(Boolean)
   .map(pattern => new RegExp(pattern));
-const VERCEL_PREVIEW_HOST_PATTERN = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
-
-function isAllowedVercelPreview(origin) {
-  try {
-    const { protocol, hostname } = new URL(origin);
-    return protocol === 'https:' && VERCEL_PREVIEW_HOST_PATTERN.test(hostname);
-  } catch {
-    return false;
-  }
-}
 
 function matchesAllowedPattern(origin) {
   return ALLOWED_ORIGIN_PATTERNS.some(pattern => pattern.test(origin));
@@ -103,7 +92,6 @@ function isOriginAllowed(origin, host) {
     CORS_ALLOW_ALL ||
     ALLOWED_ORIGINS.includes(normalizedOrigin) ||
     sameOrigin ||
-    isAllowedVercelPreview(normalizedOrigin) ||
     matchesAllowedPattern(normalizedOrigin);
 }
 
@@ -116,7 +104,7 @@ const io = new Server(server, {
   }
 });
 app.set('io', io);
-app.set('trust proxy', 1); // Railway sits behind a proxy
+app.set('trust proxy', 1); // behind Dokploy's reverse proxy (Traefik)
 
 // ── Structured request logging ────────────────────────────────────
 app.use(pinoHttp({
@@ -153,7 +141,7 @@ app.use(cors((req, callback) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Security headers for all responses (covers Railway single-container path where nginx isn't involved)
+// Security headers for all responses (covers requests that don't pass through nginx)
 app.use((_req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -410,7 +398,7 @@ async function shutdown(signal) {
     }
     process.exit(0);
   });
-  // Force exit after 15 s if drain hangs — Railway will SIGKILL anyway
+  // Force exit after 15 s if drain hangs — the container runtime will SIGKILL anyway
   setTimeout(() => {
     logger.warn('[shutdown] drain timeout — forcing exit');
     process.exit(1);
@@ -459,7 +447,7 @@ async function boot() {
 
   // Startup configuration report
   logger.info({
-    version:  process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
+    version:  process.env.GIT_COMMIT_SHA?.slice(0, 8) || 'dev',
     env:      process.env.NODE_ENV || 'development',
     port:     PORT,
     resend:   !!process.env.RESEND_API_KEY,

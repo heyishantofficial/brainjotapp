@@ -767,7 +767,7 @@ function ErrorsTab() {
       <Card>
         <CardTitle>Sentry Error Tracking</CardTitle>
         <div style={{ fontSize: '13px', color: T.sub, lineHeight: '1.7' }}>
-          To enable this panel, add three environment variables to your Vercel backend project:
+          To enable this panel, add three environment variables to the backend service:
         </div>
         <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {[

@@ -74,7 +74,7 @@ const VALID_COLLAB_ROLES = ['editor', 'viewer'];
 const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function isValidColor(c) { return typeof c === 'string' && HEX_COLOR_RE.test(c); }
 function safeIcon(icon, fallback = '📁') { return typeof icon === 'string' ? [...icon].slice(0, 4).join('') || fallback : fallback; }
-const APP_URL = process.env.APP_URL || 'https://brainjotapp.up.railway.app';
+const APP_URL = process.env.APP_URL || 'https://app.brainjot.space';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const FROM_EMAIL = process.env.FROM_EMAIL || 'BrainJot <onboarding@resend.dev>';
@@ -94,13 +94,12 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 // it — CSRF necessarily comes from a browser, which always sets Origin on
 // cross-site POSTs. Mirrors server.js's origin logic (kept local to avoid a
 // circular require between server.js and this router).
-const CSRF_VERCEL_PREVIEW_RE = /^brainjotapp-[a-z0-9-]+-heyishantofficials-projects\.vercel\.app$/i;
 function buildTrustedOriginSet() {
   const list = [
     'http://localhost:5173', 'http://127.0.0.1:5173',
     'http://localhost:5174', 'http://127.0.0.1:5174',
     'https://brainjot.space', 'https://www.brainjot.space', 'https://app.brainjot.space',
-    'https://community.brainjot.space', 'https://brainjotapp-4edj.vercel.app',
+    'https://community.brainjot.space',
     process.env.MAIN_APP_URL, process.env.COMMUNITY_APP_URL,
     process.env.APP_URL, process.env.FRONTEND_URL, process.env.CLIENT_URL, process.env.PUBLIC_APP_URL,
     ...(process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
@@ -117,7 +116,6 @@ function isTrustedBrowserOrigin(req) {
     const { protocol, hostname } = new URL(origin);
     if (protocol !== 'https:') return false;
     if (hostname === 'brainjot.space' || hostname.endsWith('.brainjot.space')) return true;
-    if (CSRF_VERCEL_PREVIEW_RE.test(hostname)) return true;
   } catch { /* malformed Origin → reject below */ }
   return false;
 }

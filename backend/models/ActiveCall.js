@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 // Persists active call state in MongoDB instead of in-process memory.
 // Benefits over a Map:
 //   - Survives server restarts (callers see a clean ended-call rather than a ghost)
-//   - Shared across multiple Railway instances
+//   - Shared across multiple server instances
 //   - TTL auto-cleans abandoned calls 2 hours after they start
 const activeCallSchema = new mongoose.Schema({
   callId:      { type: String, required: true, unique: true },
