@@ -237,8 +237,15 @@ export default function Sidebar({
   };
   const handleSpaceDragOver  = (e) => {
     e.preventDefault();
-    dragModifierRef.current = e.ctrlKey || e.metaKey;
-    e.dataTransfer.dropEffect = dragModifierRef.current ? 'move' : 'copy';
+    // types is readable during dragover (getData is not); type keys are lowercased
+    if (e.dataTransfer.types.includes('spaceid')) {
+      // Space being reordered: dropEffect must stay within effectAllowed ('move'),
+      // otherwise the browser rejects the target and never fires drop
+      e.dataTransfer.dropEffect = 'move';
+    } else {
+      dragModifierRef.current = e.ctrlKey || e.metaKey;
+      e.dataTransfer.dropEffect = dragModifierRef.current ? 'move' : 'copy';
+    }
     e.currentTarget.classList.add('drop-target');
   };
   const handleSpaceDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
