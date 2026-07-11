@@ -149,6 +149,17 @@ export default function FeedbackPanel({ isOpen, onClose }) {
               </div>
             </div>
 
+            {/* ── Beta notice ── */}
+            <div style={{
+              padding: '10px 20px',
+              background: '#f59e0b15',
+              borderBottom: '1px solid var(--border)',
+              fontSize: '12px', lineHeight: '1.5', color: 'var(--muted)',
+              flexShrink: 0,
+            }}>
+              🧪 <strong style={{ color: 'var(--text)' }}>This app is in beta testing right now.</strong> If you find any bug, please report it here — we'll try to fix it ASAP.
+            </div>
+
             {/* ── List ── */}
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {loading ? (
