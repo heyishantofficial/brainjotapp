@@ -14,20 +14,21 @@ const COMMUNITY_URL = import.meta.env.VITE_COMMUNITY_URL || 'https://community.b
 // while the sidebar auto-scrolls during a reorder drag
 const MotionNav = motion.nav;
 
-// One reorderable space block. Render-prop child receives the drag controls
-// so only the dot-grid handle starts a drag — clicks on the space name keep
-// selecting/expanding as normal.
-function SpaceReorderItem({ spaceId, onDragEnd, children }) {
+// One reorderable sidebar row/block (space or project). Render-prop child
+// receives the drag controls so only the dot-grid handle starts a drag —
+// clicks on the row keep selecting/expanding as normal. Opaque background
+// so rows beneath don't show through while the item floats.
+function SidebarReorderItem({ value, onDragEnd, style, children }) {
   const dragControls = useDragControls();
   return (
     <Reorder.Item
       as="div"
-      value={spaceId}
+      value={value}
       dragListener={false}
       dragControls={dragControls}
       onDragEnd={onDragEnd}
       whileDrag={{ scale: 1.02, zIndex: 5, boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}
-      style={{ marginBottom: '4px', position: 'relative', borderRadius: '12px', background: 'var(--surface)' }}
+      style={{ position: 'relative', borderRadius: '12px', background: 'var(--surface)', ...style }}
     >
       {children(dragControls)}
     </Reorder.Item>
@@ -59,9 +60,12 @@ export default function Sidebar({
 }) {
   const dragModifierRef = useRef(false);
   // Order chosen by an in-flight/finished motion drag; null = server order.
-  // Ref mirrors it so handleSpaceDragEnd reads the latest without re-binding.
+  // Refs mirror state so the dragEnd handlers read the latest without re-binding.
   const [localSpaceOrder, setLocalSpaceOrder] = useState(null);
   const spaceOrderRef = useRef(null);
+  // Same for projects, scoped to one space: { spaceId, ids }
+  const [localProjOrder, setLocalProjOrder] = useState(null);
+  const projOrderRef = useRef(null);
   const [expandedSpaces,  setExpandedSpaces]  = useState(new Set());
   const [contextMenu,     setContextMenu]     = useState({ open: false, x: 0, y: 0, project: null });
   const [spaceCtxMenu,    setSpaceCtxMenu]    = useState({ open: false, x: 0, y: 0, space: null });
@@ -215,7 +219,8 @@ export default function Sidebar({
     setSpaceCtxMenu(p => ({ ...p, open: false }));
   };
 
-  // ── Drag & drop project reorder ───────────────────────────────────
+  // ── HTML5 drag of a project row: drop onto a space header to copy ──
+  // (or Ctrl/⌘ to move). Reordering within a space is motion-based below.
   const handleDragStart = (e, pid, title, color) => {
     e.dataTransfer.setData('projectId', pid);
     e.dataTransfer.effectAllowed = 'copyMove';
@@ -233,22 +238,6 @@ export default function Sidebar({
     e.dataTransfer.setDragImage(pill, pill.offsetWidth / 2, 20);
     requestAnimationFrame(() => document.body.removeChild(pill));
   };
-  const handleDragOver  = (e) => { e.preventDefault(); e.currentTarget.classList.add('drop-target'); };
-  const handleDragLeave = (e) => { e.currentTarget.classList.remove('drop-target'); };
-  const handleDrop      = async (e, targetPid) => {
-    e.preventDefault();
-    e.currentTarget.classList.remove('drop-target');
-    const sourcePid = e.dataTransfer.getData('projectId');
-    if (sourcePid === targetPid || !sourcePid) return;
-    const newOrder = projects.map(p => p.id);
-    const srcIdx = newOrder.indexOf(sourcePid);
-    const tgtIdx = newOrder.indexOf(targetPid);
-    newOrder.splice(srcIdx, 1);
-    newOrder.splice(tgtIdx, 0, sourcePid);
-    await api('reorder_projects', { order: newOrder });
-    onReorder();
-  };
-
   // Spaces in locally-dragged order when valid, otherwise server order.
   // Falling back (rather than resetting state) keeps a mid-drag socket
   // refresh from snapping the list while the user is still holding an item.
@@ -275,6 +264,36 @@ export default function Sidebar({
     if (order.length === serverOrder.length && order.every((id, i) => id === serverOrder[i])) return;
     await api('reorder_spaces', { order });
     onReorder();
+  };
+
+  // ── Project reorder within a space (framer-motion pointer drag) ────
+  // The API wants one global project order, so on drop we take the global
+  // list and rewrite just the slots occupied by this space's projects with
+  // their newly dragged sequence — other spaces' ordering is untouched.
+  const handleProjectsReorder = (spaceId, ids) => {
+    projOrderRef.current = { spaceId, ids };
+    setLocalProjOrder({ spaceId, ids });
+  };
+  const handleProjectDragEnd = async () => {
+    const local = projOrderRef.current;
+    if (!local) return;
+    const globalIds = projects.map(p => p.id);
+    const inSpace = new Set(local.ids);
+    let k = 0;
+    const merged = globalIds.map(id => (inSpace.has(id) ? local.ids[k++] : id));
+    if (merged.every((id, i) => id === globalIds[i])) return;
+    await api('reorder_projects', { order: merged });
+    onReorder();
+  };
+
+  // spaceProjects in locally-dragged order when the drag belongs to this
+  // space and the id set still matches; otherwise server order (same
+  // snap-back guard as orderedSpaces above).
+  const orderProjectsFor = (spaceId, baseProjects) => {
+    if (localProjOrder?.spaceId !== spaceId) return baseProjects;
+    const byId = new Map(baseProjects.map(p => [p.id, p]));
+    const usable = localProjOrder.ids.length === baseProjects.length && localProjOrder.ids.every(id => byId.has(id));
+    return usable ? localProjOrder.ids.map(id => byId.get(id)) : baseProjects;
   };
 
   // ── Drop a project onto a space header (copy, or Ctrl/⌘ to move) ──
@@ -355,11 +374,11 @@ export default function Sidebar({
         </div>
         <Reorder.Group as="div" axis="y" id="nav-spaces" values={orderedSpaces.map(s => s.id)} onReorder={handleSpacesReorder}>
           {orderedSpaces.map(space => {
-            const spaceProjects = projects.filter(p => p.spaceId === space.id && !p.archived);
+            const spaceProjects = orderProjectsFor(space.id, projects.filter(p => p.spaceId === space.id && !p.archived));
             const isExpanded = expandedSpaces.has(space.id);
             const isSpaceActive = currentSpaceId === space.id && !currentProjectId;
             return (
-              <SpaceReorderItem key={space.id} spaceId={space.id} onDragEnd={handleSpaceDragEnd}>
+              <SidebarReorderItem key={space.id} value={space.id} onDragEnd={handleSpaceDragEnd} style={{ marginBottom: '4px' }}>
                 {(dragControls) => (<>
                 {/* Space header row */}
                 <div
@@ -410,33 +429,50 @@ export default function Sidebar({
 
 
                 {/* Projects under this space */}
-                {isExpanded && spaceProjects.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center' }}>
-                    <button
-                      className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
-                      onClick={() => onSelect(p.id)}
-                      onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
-                      draggable="true"
-                      onDragStart={e => handleDragStart(e, p.id, p.title, p.color)}
-                      onDragOver={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onDrop={e => handleDrop(e, p.id)}
-                      style={{ paddingLeft: '28px', fontSize: '13px', opacity: 0.9, flex: 1 }}
-                    >
-                      <span className="nav-dot" style={{ background: p.color }}></span>
-                      <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                        {p.title}
-                      </span>
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setContextMenu({ open: true, x: r.right, y: r.bottom, project: p }); }}
-                      aria-label={`More options for ${p.title}`}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', fontSize: '14px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
-                      onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
-                      onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
-                    >⋯</button>
-                  </div>
-                ))}
+                {isExpanded && spaceProjects.length > 0 && (
+                  <Reorder.Group as="div" axis="y" values={spaceProjects.map(p => p.id)} onReorder={ids => handleProjectsReorder(space.id, ids)}>
+                    {spaceProjects.map(p => (
+                      <SidebarReorderItem key={p.id} value={p.id} onDragEnd={handleProjectDragEnd}>
+                        {(projDragControls) => (
+                          <div className="proj-row" style={{ display: 'flex', alignItems: 'center' }}>
+                            <div
+                              className="proj-drag-handle"
+                              onPointerDown={e => { e.preventDefault(); projDragControls.start(e); }}
+                              title="Drag to reorder"
+                              aria-label={`Drag to reorder ${p.title}`}
+                            >
+                              <svg width="8" height="12" viewBox="0 0 10 14" fill="currentColor" style={{ pointerEvents: 'none' }}>
+                                <circle cx="3" cy="2.5" r="1.5"/><circle cx="7" cy="2.5" r="1.5"/>
+                                <circle cx="3" cy="7"   r="1.5"/><circle cx="7" cy="7"   r="1.5"/>
+                                <circle cx="3" cy="11.5" r="1.5"/><circle cx="7" cy="11.5" r="1.5"/>
+                              </svg>
+                            </div>
+                            <button
+                              className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
+                              onClick={() => onSelect(p.id)}
+                              onContextMenu={e => { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }}
+                              draggable="true"
+                              onDragStart={e => handleDragStart(e, p.id, p.title, p.color)}
+                              style={{ paddingLeft: '10px', fontSize: '13px', opacity: 0.9, flex: 1 }}
+                            >
+                              <span className="nav-dot" style={{ background: p.color }}></span>
+                              <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                {p.title}
+                              </span>
+                            </button>
+                            <button
+                              onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setContextMenu({ open: true, x: r.right, y: r.bottom, project: p }); }}
+                              aria-label={`More options for ${p.title}`}
+                              style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', fontSize: '14px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                              onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
+                              onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
+                            >⋯</button>
+                          </div>
+                        )}
+                      </SidebarReorderItem>
+                    ))}
+                  </Reorder.Group>
+                )}
                 {isExpanded && spaceProjects.length === 0 && (
                   <div style={{ paddingLeft: '28px', fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}>No projects</div>
                 )}
@@ -451,7 +487,7 @@ export default function Sidebar({
                   </button>
                 )}
                 </>)}
-              </SpaceReorderItem>
+              </SidebarReorderItem>
             );
           })}
         </Reorder.Group>
