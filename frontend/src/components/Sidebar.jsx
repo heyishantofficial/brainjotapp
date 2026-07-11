@@ -24,6 +24,11 @@ function SidebarReorderItem({ value, onDragEnd, style, children }) {
     <Reorder.Item
       as="div"
       value={value}
+      // "position" instead of the default full layout animation: expanding/
+      // collapsing a space changes block height, and animating size would
+      // scale-stretch the row content for a beat. Position-only still gives
+      // the smooth slide during drags.
+      layout="position"
       dragListener={false}
       dragControls={dragControls}
       onDragEnd={onDragEnd}
