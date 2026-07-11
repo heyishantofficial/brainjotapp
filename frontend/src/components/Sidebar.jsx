@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Users } from 'lucide-react';
-import { Reorder, useDragControls, motion } from 'framer-motion';
+import { Reorder, useDragControls, motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import DialogModal from './DialogModal';
 import ProjectModal from './ProjectModal';
@@ -433,13 +433,23 @@ export default function Sidebar({
                 </div>
 
 
-                {/* Projects under this space */}
-                {isExpanded && spaceProjects.length > 0 && (
+                {/* Projects under this space — staggered fade-in on expand,
+                    quick whole-block fade-out on collapse */}
+                <AnimatePresence initial={false}>
+                {isExpanded && (
+                <motion.div key="space-projects" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                {spaceProjects.length > 0 && (
                   <Reorder.Group as="div" axis="y" values={spaceProjects.map(p => p.id)} onReorder={ids => handleProjectsReorder(space.id, ids)}>
-                    {spaceProjects.map(p => (
+                    {spaceProjects.map((p, i) => (
                       <SidebarReorderItem key={p.id} value={p.id} onDragEnd={handleProjectDragEnd}>
                         {(projDragControls) => (
-                          <div className="proj-row" style={{ display: 'flex', alignItems: 'center' }}>
+                          <motion.div
+                            className="proj-row"
+                            style={{ display: 'flex', alignItems: 'center' }}
+                            initial={{ opacity: 0, y: -6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.045, 0.35) }}
+                          >
                             <div
                               className="proj-drag-handle"
                               onPointerDown={e => { e.preventDefault(); projDragControls.start(e); }}
@@ -472,25 +482,34 @@ export default function Sidebar({
                               onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
                               onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
                             >⋯</button>
-                          </div>
+                          </motion.div>
                         )}
                       </SidebarReorderItem>
                     ))}
                   </Reorder.Group>
                 )}
-                {isExpanded && spaceProjects.length === 0 && (
-                  <div style={{ paddingLeft: '28px', fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}>No projects</div>
+                {spaceProjects.length === 0 && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.18 }}
+                    style={{ paddingLeft: '28px', fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}
+                  >No projects</motion.div>
                 )}
-                {isExpanded && (
-                  <button
-                    onClick={e => { e.stopPropagation(); onAddProjectToSpace?.(space.id); }}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '5px 8px 5px 28px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: space.color, borderRadius: '8px', opacity: 0.8, transition: 'opacity 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-                    onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
-                  >
-                    <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> New Project
-                  </button>
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.8 }}
+                  transition={{ duration: 0.18, delay: Math.min(spaceProjects.length, 8) * 0.045 }}
+                  onClick={e => { e.stopPropagation(); onAddProjectToSpace?.(space.id); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', padding: '5px 8px 5px 28px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', color: space.color, borderRadius: '8px' }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity = '0.8'}
+                >
+                  <span style={{ fontSize: '14px', lineHeight: 1 }}>+</span> New Project
+                </motion.button>
+                </motion.div>
                 )}
+                </AnimatePresence>
                 </>)}
               </SidebarReorderItem>
             );
@@ -532,25 +551,39 @@ export default function Sidebar({
                       </button>
                       <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0, marginRight: '2px' }}>🗂</span>
                     </div>
-                    {isExpanded && spaceProjects.map(p => {
+                    <AnimatePresence initial={false}>
+                    {isExpanded && (
+                    <motion.div key="shared-space-projects" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+                    {spaceProjects.map((p, i) => {
                       const isOwned = projects.some(op => op.id === p.id);
                       return (
-                        <button
+                        <motion.button
                           key={p.id}
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 0.9, y: 0 }}
+                          transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.045, 0.35) }}
                           className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
                           onClick={() => isOwned ? onSelect(p.id) : onSelectSharedSpace(s.id)}
-                          style={{ paddingLeft: '28px', fontSize: '13px', opacity: 0.9, width: '100%' }}
+                          style={{ paddingLeft: '28px', fontSize: '13px', width: '100%' }}
                         >
                           <span className="nav-dot" style={{ background: p.color }}></span>
                           <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                             {p.title}
                           </span>
-                        </button>
+                        </motion.button>
                       );
                     })}
-                    {isExpanded && spaceProjects.length === 0 && (
-                      <div style={{ fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}>No projects</div>
+                    {spaceProjects.length === 0 && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.18 }}
+                        style={{ fontSize: '12px', color: 'var(--faint)', padding: '4px 8px 4px 32px', fontStyle: 'italic' }}
+                      >No projects</motion.div>
                     )}
+                    </motion.div>
+                    )}
+                    </AnimatePresence>
                   </div>
                 );
               })}
