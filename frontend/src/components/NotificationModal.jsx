@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { api } from '../api';
 import Avatar from './Avatar';
 
@@ -141,6 +142,7 @@ function NotifRow({ notif, onRespond, onNavigate }) {
 export default function NotificationModal({ isOpen, onClose, notifications, onRefresh, onNavigate }) {
   const modalRef = useRef(null);
   const [markingAll, setMarkingAll] = useState(false);
+  const [notifListRef] = useAutoAnimate();
 
   useEffect(() => {
     const handleKeyDown = (e) => { if (e.key === 'Escape' && isOpen) onClose(); };
@@ -207,7 +209,7 @@ export default function NotificationModal({ isOpen, onClose, notifications, onRe
               </div>
             </div>
 
-            <div style={{ maxHeight: '420px', overflowY: 'auto' }}>
+            <div ref={notifListRef} style={{ maxHeight: '420px', overflowY: 'auto' }}>
               {notifications.length === 0 ? (
                 <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--muted)' }}>
                   <div style={{ fontSize: '36px', marginBottom: '12px' }}>📭</div>

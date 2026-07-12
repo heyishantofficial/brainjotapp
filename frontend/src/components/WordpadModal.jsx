@@ -1,8 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { api } from '../api';
 import DOMPurify from 'dompurify';
+import { useEscapeClose } from '../utils/hooks';
 
 export default function WordpadModal({ project, taskId, type, initialContent, onClose, onSave, onToast }) {
+  useEscapeClose(onClose);
   const editorRef = useRef(null);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { api, apiUpload, apiUrl } from '../api';
 import DOMPurify from 'dompurify';
 import MentionInput from './MentionInput';
@@ -53,6 +54,9 @@ export default function TaskItem({
   const chatThreadRef = useRef(null);
   const taskRef = useRef(null);
   const labelPickerRef = useRef(null);
+  // Smooth add/remove animation for the attached-files list and chat thread
+  const [taskFilesRef] = useAutoAnimate();
+  const [chatAnimRef] = useAutoAnimate();
 
   const fileCount = (task.files || []).length;
   const hasNotes = (task.notes || '').trim().length > 0 || (task.richNotes || '').trim().length > 0;
@@ -596,7 +600,7 @@ export default function TaskItem({
           )}
           
           {fileCount > 0 && (
-            <div className="task-files-list">
+            <div className="task-files-list" ref={taskFilesRef}>
               {task.files.map(f => {
                 const isImg = ['jpg','jpeg','png','gif','webp'].includes(f.type);
                 return (
@@ -625,7 +629,7 @@ export default function TaskItem({
           <div className="task-panel-label" style={{ marginBottom: '10px' }}>Task Discussion</div>
 
           {/* Messages thread */}
-          <div ref={chatThreadRef} style={{
+          <div ref={(el) => { chatThreadRef.current = el; chatAnimRef(el); }} style={{
             display: 'flex', flexDirection: 'column', gap: '8px',
             maxHeight: '300px', overflowY: 'auto', paddingRight: '2px', marginBottom: '10px',
           }}>

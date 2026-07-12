@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Bell, Search, MessageSquarePlus } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import { api } from '../api';
@@ -39,7 +39,12 @@ export default function SpaceView({
   isInCall = false,
   onDismissCallBanner,
   onToast,
+  onToggleTask,
 }) {
+  // Tasks checked off moments ago stay on their focus card briefly so the
+  // checkbox animation can play before the card leaves the rail.
+  const [recentlyDone, setRecentlyDone] = useState(() => new Set());
+
   const activeProjects = projects.filter(p => !p.archived);
   const totalTasks = activeProjects.reduce((s, p) => s + (p.tasks || []).length, 0);
   const doneTasks  = activeProjects.reduce((s, p) => s + (p.tasks || []).filter(t => t.done).length, 0);
@@ -51,7 +56,7 @@ export default function SpaceView({
   const focusTasks = [];
   activeProjects.forEach(p => {
     (p.tasks || []).forEach(t => {
-      if (t.done) return;
+      if (t.done && !recentlyDone.has(t.id)) return;
       let score = priorityWeight[t.priority] || 0;
       let isOverdue = false;
       if (t.deadline) {
@@ -64,10 +69,14 @@ export default function SpaceView({
   });
   const topFocusTasks = focusTasks.sort((a, b) => b.score - a.score).slice(0, 8);
 
-  const handleToggleFocusTask = async (e, pId, tId) => {
+  const handleToggleFocusTask = (e, pId, tId) => {
     e.stopPropagation();
-    await api('task_toggle', { projectId: pId, taskId: tId });
-    onReorder();
+    setRecentlyDone(prev => new Set([...prev, tId]));
+    setTimeout(() => setRecentlyDone(prev => {
+      if (!prev.has(tId)) return prev;
+      const next = new Set(prev); next.delete(tId); return next;
+    }), 900);
+    onToggleTask(pId, tId);
   };
 
   const handleDropGlobal = async (e, targetPid) => {
@@ -265,11 +274,12 @@ export default function SpaceView({
               >
                 <button
                   role="checkbox"
-                  aria-checked={t.done}
+                  aria-checked={!!t.done}
                   aria-label="Toggle task done"
                   tabIndex={0}
+                  className={`task-check ${t.done ? 'done' : ''}`}
                   onClick={e => handleToggleFocusTask(e, t.projectId, t.id)}
-                  style={{ width: '24px', height: '24px', borderRadius: '8px', border: '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', padding: 0, cursor: 'pointer' }}
+                  style={{ width: '24px', height: '24px', borderRadius: '8px', border: t.done ? undefined : '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.done ? undefined : 'none', padding: 0, cursor: 'pointer' }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '16px', fontWeight: '800', lineHeight: '1.2', color: '#000', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.3px' }}>{t.text}</div>

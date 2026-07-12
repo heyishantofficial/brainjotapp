@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io as socketIO } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion';
-import { API_ORIGIN, api } from './api';
+import { API_ORIGIN, api, apiCommit, hasPendingMutations, onMutationsSettled } from './api';
 import { identifyUser, resetAnalytics, track } from './analytics';
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
@@ -162,15 +162,59 @@ export default function App() {
   const currentRoomRef = useRef(null);
   const pollFailuresRef = useRef(0);
 
+  // ── Optimistic UI infrastructure ──────────────────────────────────
+  // dataLoaded: false until the first get completes — drives skeleton loaders.
+  const [dataLoaded, setDataLoaded] = useState(false);
+  // Bumped on every optimistic local patch; a refetch that started before the
+  // bump is stale and must be discarded instead of overwriting the patch.
+  const patchEpochRef = useRef(0);
+  // Deferred deletes ("Undo" window): entityId → { timer, commitAction, commitBody }.
+  // The server is NOT called until the window expires, so Undo loses nothing.
+  const pendingDeletesRef = useRef(new Map());
+  const wantsReloadRef = useRef(false);
+
+  // Strip entities whose deletion is pending (inside the undo window) from
+  // freshly fetched server data — the server still has them until commit.
+  const filterPendingDeletes = useCallback((data) => {
+    const pending = pendingDeletesRef.current;
+    if (pending.size === 0) return data;
+    const gone = (id) => pending.has(id);
+    const stripTasks = (p) => {
+      const tasks = (p.tasks || []).filter(t => !gone(t.id));
+      return tasks.length === (p.tasks || []).length ? p : { ...p, tasks };
+    };
+    return {
+      ...data,
+      spaces: (data.spaces || []).filter(s => !gone(s.id)),
+      projects: (data.projects || []).filter(p => !gone(p.id) && !gone(p.spaceId)).map(stripTasks),
+      sharedProjects: (data.sharedProjects || []).map(stripTasks),
+      sharedSpaces: (data.sharedSpaces || []).map(s =>
+        s.projects ? { ...s, projects: s.projects.map(stripTasks) } : s
+      ),
+    };
+  }, []);
+
   const loadData = useCallback(async () => {
+    // Writes in flight → refetching now would clobber optimistic state with
+    // stale data. Defer; the onMutationsSettled listener re-runs us.
+    if (hasPendingMutations()) { wantsReloadRef.current = true; return; }
+    const epoch = patchEpochRef.current;
     try {
       const data = await api('get', null, 'GET');
       pollFailuresRef.current = 0; // reset on success
+      // A local patch happened while this fetch was in the air — its result
+      // no longer reflects what the user sees. Discard and refetch.
+      if (epoch !== patchEpochRef.current) {
+        if (hasPendingMutations()) wantsReloadRef.current = true;
+        else setTimeout(() => loadDataRef.current(), 0);
+        return;
+      }
       if (data?.spaces && data?.projects) {
-        appDataRef.current = data;
-        setAppData(data);
-        if (Array.isArray(data.sharedProjects)) setSharedProjects(data.sharedProjects);
-        if (Array.isArray(data.sharedSpaces)) setSharedSpaces(data.sharedSpaces);
+        const filtered = filterPendingDeletes(data);
+        appDataRef.current = filtered;
+        setAppData({ spaces: filtered.spaces, projects: filtered.projects });
+        if (Array.isArray(data.sharedProjects)) setSharedProjects(filtered.sharedProjects);
+        if (Array.isArray(data.sharedSpaces)) setSharedSpaces(filtered.sharedSpaces);
         scheduleDeadlineReminders(() => appDataRef.current.projects || []);
       }
     } catch (err) {
@@ -182,7 +226,104 @@ export default function App() {
       }
     } finally {
       setLoading(false);
+      setDataLoaded(true);
     }
+  }, [filterPendingDeletes]);
+
+  const loadDataRef = useRef(loadData);
+  useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
+
+  // When the last in-flight write settles, run any refetch that was deferred.
+  useEffect(() => onMutationsSettled(() => {
+    if (wantsReloadRef.current) {
+      wantsReloadRef.current = false;
+      loadDataRef.current();
+    }
+  }), []);
+
+  // Apply an optimistic change to one project's tasks everywhere that project
+  // can appear (own projects, shared projects, projects nested in shared spaces).
+  const patchProjectTasks = useCallback((projectId, patcher) => {
+    patchEpochRef.current++;
+    const apply = (list) => (list || []).map(p =>
+      p.id === projectId ? { ...p, tasks: patcher(p.tasks || []) } : p
+    );
+    setAppData(prev => {
+      const next = { ...prev, projects: apply(prev.projects) };
+      appDataRef.current = { ...appDataRef.current, projects: next.projects };
+      return next;
+    });
+    setSharedProjects(prev => apply(prev));
+    setSharedSpaces(prev => (prev || []).map(s =>
+      s.projects ? { ...s, projects: apply(s.projects) } : s
+    ));
+  }, []);
+
+  // Instant checkbox everywhere: flip locally, sync in the background.
+  const toggleTaskOptimistic = useCallback((projectId, taskId) => {
+    patchProjectTasks(projectId, tasks => tasks.map(t => {
+      if (t.id !== taskId) return t;
+      const nowDone = !t.done;
+      return { ...t, done: nowDone, finishedAt: nowDone ? new Date().toISOString() : null };
+    }));
+    api('task_toggle', { projectId, taskId })
+      .catch(() => {})
+      .finally(() => loadDataRef.current());
+  }, [patchProjectTasks]);
+
+  const UNDO_WINDOW_MS = 10000;
+
+  // Deferred delete: remove from the UI now, call the server only after the
+  // undo window closes. Undo simply cancels the timer — nothing was lost.
+  const scheduleDelete = useCallback(({ entityId, message, commitAction, commitBody, onOptimistic, onUndo }) => {
+    if (pendingDeletesRef.current.has(entityId)) return;
+    patchEpochRef.current++;
+    pendingDeletesRef.current.set(entityId, { timer: null, commitAction, commitBody });
+    // Optimistically strip the entity from all current state
+    setAppData(prev => {
+      const f = filterPendingDeletes({ ...prev, sharedProjects: [], sharedSpaces: [] });
+      const next = { spaces: f.spaces, projects: f.projects };
+      appDataRef.current = { ...appDataRef.current, ...next };
+      return next;
+    });
+    setSharedProjects(prev => filterPendingDeletes({ spaces: [], projects: [], sharedProjects: prev }).sharedProjects);
+    setSharedSpaces(prev => filterPendingDeletes({ spaces: [], projects: [], sharedSpaces: prev }).sharedSpaces);
+    onOptimistic?.();
+    const timer = setTimeout(async () => {
+      pendingDeletesRef.current.delete(entityId);
+      try { await api(commitAction, commitBody); } catch { /* refetch below restores it if the delete failed */ }
+      loadDataRef.current();
+    }, UNDO_WINDOW_MS);
+    pendingDeletesRef.current.get(entityId).timer = timer;
+    setToastData({
+      message,
+      duration: UNDO_WINDOW_MS,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const entry = pendingDeletesRef.current.get(entityId);
+          if (!entry) return;
+          clearTimeout(entry.timer);
+          pendingDeletesRef.current.delete(entityId);
+          onUndo?.();
+          loadDataRef.current(); // server never deleted it — refetch restores it fully
+        },
+      },
+    });
+  }, [filterPendingDeletes]);
+
+  // If the tab closes mid-undo-window, commit pending deletes with keepalive
+  // requests so "deleted" items don't silently come back next session.
+  useEffect(() => {
+    const commitAll = () => {
+      pendingDeletesRef.current.forEach(({ timer, commitAction, commitBody }) => {
+        clearTimeout(timer);
+        apiCommit(commitAction, commitBody);
+      });
+      pendingDeletesRef.current.clear();
+    };
+    window.addEventListener('pagehide', commitAll);
+    return () => window.removeEventListener('pagehide', commitAll);
   }, []);
 
   // Poll notifications and app data every 20 s — skips hidden tabs to save battery
@@ -347,6 +488,12 @@ export default function App() {
 
   const handleLogout = async () => {
     stopDeadlineReminders();
+    // Commit any deletes still inside their undo window before the session ends
+    pendingDeletesRef.current.forEach(({ timer, commitAction, commitBody }) => {
+      clearTimeout(timer);
+      apiCommit(commitAction, commitBody);
+    });
+    pendingDeletesRef.current.clear();
     track('logged_out');
     resetAnalytics();
     await api('logout');
@@ -563,6 +710,9 @@ export default function App() {
         onOpenNotifications={() => setShowNotifications(true)}
         unreadNotifications={unreadCount}
         collapsed={sidebarCollapsed}
+        onToast={toast}
+        onScheduleDelete={scheduleDelete}
+        isLoading={!dataLoaded}
       />
 
       <main className={`main ${sidebarCollapsed ? 'expanded' : ''}`}>
@@ -581,6 +731,9 @@ export default function App() {
             projects={appData.projects}
             sharedProjects={sharedProjects}
             sharedSpaces={sharedSpaces}
+            currentUser={currentUser}
+            isLoading={!dataLoaded}
+            onToggleTask={toggleTaskOptimistic}
             onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }}
             onOpenSharedProject={(pid) => { setCurrentSharedProjectId(pid); setCurrentProjectId(null); }}
             onOpenSpace={(sid) => { setCurrentSpaceId(sid); setCurrentProjectId(null); setCurrentSharedProjectId(null); setCurrentSharedSpaceId(null); }}
@@ -596,6 +749,7 @@ export default function App() {
           <SpaceView
             space={currentSpace}
             projects={(appData.projects || []).filter(p => p.spaceId === currentSpaceId)}
+            onToggleTask={toggleTaskOptimistic}
             onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }}
             onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSpaceId); setShowAddProject(true); }}
@@ -620,6 +774,7 @@ export default function App() {
           <SpaceView
             space={currentSharedSpace}
             projects={(currentSharedSpace.projects || []).filter(p => !p.archived)}
+            onToggleTask={toggleTaskOptimistic}
             onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); setCurrentSharedSpaceId(null); }}
             onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
@@ -646,6 +801,13 @@ export default function App() {
               <ProjectDetailView
                 project={currentProject}
                 spaceCollaborators={currentProject.spaceId ? ((appData.spaces || []).find(s => s.id === currentProject.spaceId)?.collaborators || []) : []}
+                onPatchTasks={patchProjectTasks}
+                onScheduleTaskDelete={(task) => scheduleDelete({
+                  entityId: task.id,
+                  message: 'Task deleted',
+                  commitAction: 'delete_task',
+                  commitBody: { projectId: currentProject.id, taskId: task.id },
+                })}
                 onBack={() => {
                   const spaceId = currentProject?.spaceId;
                   setCurrentProjectId(null);
@@ -690,6 +852,13 @@ export default function App() {
               <ProjectDetailView
                 project={currentSharedProject}
                 spaceCollaborators={currentSharedProject.spaceId ? (sharedSpaces.find(s => s.id === currentSharedProject.spaceId)?.collaborators || []) : []}
+                onPatchTasks={patchProjectTasks}
+                onScheduleTaskDelete={(task) => scheduleDelete({
+                  entityId: task.id,
+                  message: 'Task deleted',
+                  commitAction: 'delete_task',
+                  commitBody: { projectId: currentSharedProject.id, taskId: task.id },
+                })}
                 isSharedView={true}
                 sharedBy={currentSharedProject.sharedBy}
                 currentUserRole={currentSharedProject.myRole || 'viewer'}

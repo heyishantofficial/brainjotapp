@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from '../api';
+import { useEscapeClose } from '../utils/hooks';
 
 const TYPE_CONFIG = {
   bug:     { icon: '🐛', label: 'Bug',     color: '#ef4444' },
@@ -32,6 +33,7 @@ function hashColor(str) {
 }
 
 export default function FeedbackPanel({ isOpen, onClose }) {
+  useEscapeClose(onClose, isOpen);
   const [items, setItems]       = useState([]);
   const [filter, setFilter]     = useState('all');
   const [message, setMessage]   = useState('');

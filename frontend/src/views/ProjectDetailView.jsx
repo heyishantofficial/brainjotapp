@@ -10,6 +10,7 @@ import TaskBoard from '../components/TaskBoard';
 import TaskCalendar from '../components/TaskCalendar';
 import ActivityFeed from '../components/ActivityFeed';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { CountUp } from '../components/ProjectCard';
 import ConfettiCelebration from '../components/ConfettiCelebration';
 import ProjectModal from '../components/ProjectModal';
@@ -21,7 +22,7 @@ const VIEW_OPTIONS = [
   { key: 'calendar', label: 'Calendar', Icon: Calendar },
 ];
 
-export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, onJoinInvitedCall, callRequestSent = false, isInCall = false, onDismissCallBanner }) {
+export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, onJoinInvitedCall, callRequestSent = false, isInCall = false, onDismissCallBanner, onPatchTasks, onScheduleTaskDelete }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
@@ -38,8 +39,12 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [showViewMenu, setShowViewMenu] = useState(false);
   // Internal highlight target for "jump to list" from Board/Calendar
   const [focusTaskId, setFocusTaskId] = useState(null);
-  // localTasks shadows project.tasks for shared-view optimistic updates
-  // (avoids direct prop mutation which violates React immutability)
+  // Tasks checked off in the last moment: they hold their spot in the active
+  // list briefly so the checkbox animation can play before the row relocates
+  // to the Completed section.
+  const [justCompleted, setJustCompleted] = useState(() => new Set());
+  // localTasks shadows project.tasks for read-only shared views, where changes
+  // are local-only (viewers have no write access on the server)
   const [localTasks, setLocalTasks] = useState(project.tasks || []);
 
   // Keep localTasks in sync when project.tasks changes from parent (real-time refresh)
@@ -56,6 +61,9 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const notesTimerRef = useRef(null);
   const fileInputRef = useRef(null);
+  // Smooth add/remove animation for file lists (framer-motion covers the task lists)
+  const [imgGridRef] = useAutoAnimate();
+  const [filesListRef] = useAutoAnimate();
   const richNotesRef = useRef(null);
   const lastServerRichNotes = useRef(null);
   const addTaskInputRef = useRef(null);
@@ -87,7 +95,14 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const priorityWeight = { urgent: 3, important: 2, later: 1 };
 
-  const activeTasks = isSharedView ? localTasks : (project.tasks || []);
+  // Viewers on a shared project have no write access — their edits live only
+  // in localTasks. Everyone else mutates optimistically through onPatchTasks.
+  const isViewerLocal = isSharedView && currentUserRole !== 'editor';
+  const activeTasks = isViewerLocal ? localTasks : (project.tasks || []);
+
+  // "Effectively done" — done, except during the brief just-completed window
+  // where the row still renders (and sorts) as if active.
+  const effDone = (t) => t.done && !justCompleted.has(t.id);
 
   // Merge direct project collaborators with space-level collaborators (dedup by userId)
   const directCollabs = project.collaborators || [];
@@ -102,7 +117,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
   const processedTasks = [...activeTasks]
     .filter(t => {
-      if (hideCompleted && t.done) return false;
+      if (hideCompleted && effDone(t)) return false;
       const tAssignees = t.assignees || (t.assignee ? [t.assignee] : []);
       if (assigneeFilter !== 'all' && !tAssignees.includes(assigneeFilter)) return false;
       if (labelFilter && t.badge !== labelFilter) return false;
@@ -110,7 +125,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     })
     .sort((a, b) => {
       if (sortBy === 'default') {
-        if (a.done !== b.done) return a.done ? 1 : -1;
+        if (effDone(a) !== effDone(b)) return effDone(a) ? 1 : -1;
         if (a.done && b.done) {
           const aTime = a.finishedAt ? new Date(a.finishedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
           const bTime = b.finishedAt ? new Date(b.finishedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
@@ -180,34 +195,54 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     return m[ext] || '📁';
   };
 
-  const addTask = async () => {
-    if (!newTaskText.trim()) return;
-
-    if (isSharedView && currentUserRole !== 'editor') {
-      const newTask = { id: 'new-' + Date.now(), text: newTaskText, done: false, priority: 'later', createdAt: new Date().toISOString() };
-      setLocalTasks(prev => [newTask, ...prev]);
-      setNewTaskText('');
-      onUpdate();
-      return;
+  // Optimistic add: the task appears the instant Enter is pressed with a temp
+  // id, which is swapped for the server-assigned id when the response lands —
+  // same key by the time the refetch arrives, so no flicker.
+  const optimisticAdd = async (text, priority, source) => {
+    const tempId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const tempTask = {
+      id: tempId, text, done: false, badge: 'Custom', notes: '', richNotes: '',
+      files: [], deadline: '', assignee: '', assignees: [], comments: [],
+      priority: priority || '', createdAt: new Date().toISOString(),
+    };
+    onPatchTasks(project.id, ts => [...ts, tempTask]);
+    track('task_created', { source });
+    try {
+      const r = await api('add_task', { projectId: project.id, text, priority });
+      if (r?.id) {
+        onPatchTasks(project.id, ts => ts.map(t => t.id === tempId ? { ...t, id: r.id } : t));
+      } else {
+        onPatchTasks(project.id, ts => ts.filter(t => t.id !== tempId));
+        if (r?.error) onToast(r.error);
+      }
+    } catch {
+      onPatchTasks(project.id, ts => ts.filter(t => t.id !== tempId));
+      onToast('Could not add task — check your connection');
     }
-
-    await api('add_task', { projectId: project.id, text: newTaskText });
-    track('task_created', { source: 'list_view' });
-    setNewTaskText('');
     onUpdate();
   };
 
-  // Quick-add from a Board column: the new task lands with that column's priority
-  const addTaskFromBoard = async (text, priority) => {
-    if (isSharedView && currentUserRole !== 'editor') {
-      const newTask = { id: 'new-' + Date.now(), text, done: false, priority, createdAt: new Date().toISOString() };
+  const addTask = () => {
+    const text = newTaskText.trim();
+    if (!text) return;
+    setNewTaskText('');
+
+    if (isViewerLocal) {
+      const newTask = { id: 'new-' + Date.now(), text, done: false, priority: 'later', createdAt: new Date().toISOString() };
       setLocalTasks(prev => [newTask, ...prev]);
-      onUpdate();
       return;
     }
-    await api('add_task', { projectId: project.id, text, priority });
-    track('task_created', { source: 'board_view' });
-    onUpdate();
+    optimisticAdd(text, undefined, 'list_view');
+  };
+
+  // Quick-add from a Board column: the new task lands with that column's priority
+  const addTaskFromBoard = (text, priority) => {
+    if (isViewerLocal) {
+      const newTask = { id: 'new-' + Date.now(), text, done: false, priority, createdAt: new Date().toISOString() };
+      setLocalTasks(prev => [newTask, ...prev]);
+      return;
+    }
+    optimisticAdd(text, priority, 'board_view');
   };
 
 
@@ -297,16 +332,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     }
   };
 
-  const toggleTask = async (taskId) => {
+  const toggleTask = (taskId) => {
     const task = activeTasks.find(t => t.id === taskId);
     if (!task) return;
 
     // A task is considered "done" if its value is true, 1, "1", or "true"
     const isCurrentlyDone = task.done === true || task.done === 1 || task.done === '1' || task.done === 'true';
-    
+
     // Strict celebration check: Only trigger if we are marking the LAST incomplete task as done
     const isMarkingDone = !isCurrentlyDone;
-    
+
     const otherIncompleteCount = activeTasks.filter(t => {
       if (t.id === taskId) return false;
       const tIsDone = t.done === true || t.done === 1 || t.done === '1' || t.done === 'true';
@@ -315,18 +350,26 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
     const isCompletingLast = isMarkingDone && otherIncompleteCount === 0;
 
-    if (isSharedView && currentUserRole !== 'editor') {
-      setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: !isCurrentlyDone } : t));
-      onUpdate();
-      if (isCompletingLast) {
-        setCelebrationKey(prev => prev + 1);
-        setShowCelebration(true);
-      }
-      return;
+    // Let the checkbox animation play in place before the row moves down to
+    // the Completed section (see justCompleted / effDone).
+    if (isMarkingDone) {
+      setJustCompleted(prev => new Set([...prev, taskId]));
+      setTimeout(() => setJustCompleted(prev => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Set(prev); next.delete(taskId); return next;
+      }), 900);
     }
 
-    await api('task_toggle', { projectId: project.id, taskId });
-    onUpdate();
+    if (isViewerLocal) {
+      setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: !isCurrentlyDone } : t));
+    } else {
+      onPatchTasks(project.id, ts => ts.map(t =>
+        t.id === taskId
+          ? { ...t, done: !isCurrentlyDone, finishedAt: !isCurrentlyDone ? new Date().toISOString() : null }
+          : t
+      ));
+      api('task_toggle', { projectId: project.id, taskId }).catch(() => {}).finally(onUpdate);
+    }
 
     if (isCompletingLast) {
       setCelebrationKey(prev => prev + 1);
@@ -334,54 +377,44 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     }
   };
 
-  const deleteTask = async (taskId) => {
+  const deleteTask = (taskId) => {
     const taskToDelete = activeTasks.find(t => t.id === taskId);
     if (!taskToDelete) return;
 
-    onToast({
-      message: 'Task deleted',
-      action: {
-        label: 'Undo',
-        onClick: async () => {
-          if (isSharedView && currentUserRole !== 'editor') {
-            setLocalTasks(prev => [...prev, taskToDelete]);
-            onUpdate();
-            return;
-          }
-          await api('restore_task', { projectId: project.id, task: taskToDelete });
-          onUpdate();
-        }
-      }
-    });
-
-    if (isSharedView && currentUserRole !== 'editor') {
+    if (isViewerLocal) {
       setLocalTasks(prev => prev.filter(t => t.id !== taskId));
-      onUpdate();
+      onToast({
+        message: 'Task deleted',
+        duration: 10000,
+        action: {
+          label: 'Undo',
+          onClick: () => setLocalTasks(prev => [...prev, taskToDelete]),
+        }
+      });
       return;
     }
 
-    await api('delete_task', { projectId: project.id, taskId });
-    onUpdate();
+    // Deferred delete: the server isn't called until the 10s undo window
+    // closes, so Undo restores the task with all its comments/files intact.
+    onScheduleTaskDelete(taskToDelete);
   };
 
-  const updateTaskText = async (taskId, text) => {
-    if (isSharedView && currentUserRole !== 'editor') {
+  const updateTaskText = (taskId, text) => {
+    if (isViewerLocal) {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, text } : t));
-      onUpdate();
       return;
     }
-    await api('rename_task', { projectId: project.id, taskId, text });
-    onUpdate();
+    onPatchTasks(project.id, ts => ts.map(t => t.id === taskId ? { ...t, text } : t));
+    api('rename_task', { projectId: project.id, taskId, text }).catch(() => {}).finally(onUpdate);
   };
 
-  const updateTaskMeta = async (taskId, field, value) => {
-    if (isSharedView && currentUserRole !== 'editor') {
+  const updateTaskMeta = (taskId, field, value) => {
+    if (isViewerLocal) {
       setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, [field]: value } : t));
-      onUpdate();
       return;
     }
-    await api('update_task_meta', { projectId: project.id, taskId, [field]: value });
-    onUpdate();
+    onPatchTasks(project.id, ts => ts.map(t => t.id === taskId ? { ...t, [field]: value } : t));
+    api('update_task_meta', { projectId: project.id, taskId, [field]: value }).catch(() => {}).finally(onUpdate);
   };
 
   const saveTaskNotes = async (taskId, text) => {
@@ -742,7 +775,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
             {viewMode === 'list' && (
             <div id="tasks-list">
-              {processedTasks.filter(t => !t.done).length === 0 && (processedTasks.length === 0 || hideCompleted) ? (
+              {processedTasks.filter(t => !effDone(t)).length === 0 && (processedTasks.length === 0 || hideCompleted) ? (
                 <div style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -758,10 +791,12 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 </div>
               ) : (
               <AnimatePresence initial={false}>
-                {processedTasks.filter(t => !t.done).map(t => (
+                {processedTasks.filter(t => !effDone(t)).map(t => (
                   <motion.div
                     key={t.id}
                     layout
+                    initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 12, scale: 0.97 }}
                     transition={{ type: 'tween', ease: 'easeInOut', duration: 0.25 }}
                   >
@@ -803,15 +838,17 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               </div>
             )}
 
-            {viewMode === 'list' && processedTasks.some(t => t.done) && (
+            {viewMode === 'list' && processedTasks.some(t => effDone(t)) && (
               <>
                 <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--faint)', letterSpacing: '.08em', textTransform: 'uppercase', padding: '12px 12px 4px' }}>Completed</div>
                 <div id="tasks-list-done">
                   <AnimatePresence initial={false}>
-                    {processedTasks.filter(t => t.done).map(t => (
+                    {processedTasks.filter(t => effDone(t)).map(t => (
                       <motion.div
                         key={t.id}
                         layout
+                        initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 12, scale: 0.97 }}
                         transition={{ type: 'tween', ease: 'easeInOut', duration: 0.25 }}
                       >
@@ -910,7 +947,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               {images.length > 0 && (
                 <div style={{ marginTop: '14px' }}>
                   <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>Images ({images.length})</div>
-                  <div className="img-grid">
+                  <div className="img-grid" ref={imgGridRef}>
                     {images.map(f => (
                       <div className="img-thumb" key={f.id}>
                         <img src={f.url.startsWith('http') ? f.url : `/${f.url}`} alt={f.name} loading="lazy" />
@@ -926,7 +963,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               )}
 
               {others.length > 0 && (
-                <div className="files-list" style={{ marginTop: '12px' }}>
+                <div className="files-list" ref={filesListRef} style={{ marginTop: '12px' }}>
                   {others.map(f => (
                     <div className="file-item" key={f.id}>
                       <span className="file-icon">{fileIcon(f.type)}</span>

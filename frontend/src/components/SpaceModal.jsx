@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import { track } from '../analytics';
+import { useEscapeClose } from '../utils/hooks';
 
 const SPACE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#06b6d4', '#6366f1'];
 const SPACE_ICONS  = ['📁', '💼', '🏠', '📚', '🎨', '🔬', '💡', '🚀', '🎯', '🌱', '⚡', '🛠️', '🎵', '🏋️', '✈️', '💰'];
@@ -13,6 +14,7 @@ export default function SpaceModal({ onClose, onSuccess, space = null }) {
   const titleRef = useRef(null);
 
   useEffect(() => { titleRef.current?.focus(); }, []);
+  useEscapeClose(onClose);
 
   const submit = async () => {
     if (!title.trim()) { titleRef.current?.focus(); return; }

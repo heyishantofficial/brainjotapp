@@ -21,7 +21,40 @@ const apiInstance = axios.create({
   withCredentials: true,
 });
 
+// ── Mutation gate ────────────────────────────────────────────────────
+// The UI updates optimistically (before the server confirms), so a data
+// refetch that lands while writes are still in flight would overwrite the
+// optimistic state with stale server state and make the UI flicker back.
+// Every non-GET api() call increments this counter; loadData defers its
+// refetch until the counter hits zero (see App.jsx).
+let pendingMutations = 0;
+const settleCallbacks = new Set();
+
+export function hasPendingMutations() {
+  return pendingMutations > 0;
+}
+
+// cb fires each time the in-flight mutation count drops back to zero.
+// Returns an unsubscribe function.
+export function onMutationsSettled(cb) {
+  settleCallbacks.add(cb);
+  return () => settleCallbacks.delete(cb);
+}
+
+function beginMutation() {
+  pendingMutations++;
+}
+
+function endMutation() {
+  pendingMutations = Math.max(0, pendingMutations - 1);
+  if (pendingMutations === 0) {
+    settleCallbacks.forEach(cb => { try { cb(); } catch { /* listener error */ } });
+  }
+}
+
 export async function api(action, body = null, method = 'POST', extraQuery = '') {
+  const isMutation = method !== 'GET';
+  if (isMutation) beginMutation();
   try {
     const config = { method, url: `?action=${action}${extraQuery}` };
     if (body && method !== 'GET') {
@@ -39,6 +72,24 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
   } catch (error) {
     if (error.response?.data) return error.response.data;
     throw error;
+  } finally {
+    if (isMutation) endMutation();
+  }
+}
+
+// Fire-and-forget mutation that survives page unload (keepalive) — used to
+// commit pending deferred deletes when the tab closes mid-undo-window.
+export function apiCommit(action, body = null) {
+  try {
+    return fetch(`${API_BASE_URL}?action=${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      keepalive: true,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    return Promise.resolve();
   }
 }
 

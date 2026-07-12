@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Users } from 'lucide-react';
 import { Reorder, useDragControls, motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
-import DialogModal from './DialogModal';
 import ProjectModal from './ProjectModal';
 import SpaceModal from './SpaceModal';
 
@@ -62,6 +61,8 @@ export default function Sidebar({
   collapsed,
   currentUser,
   onOpenProfile,
+  onToast,
+  onScheduleDelete,
 }) {
   const dragModifierRef = useRef(false);
   // Order chosen by an in-flight/finished motion drag; null = server order.
@@ -76,7 +77,6 @@ export default function Sidebar({
   const [spaceCtxMenu,    setSpaceCtxMenu]    = useState({ open: false, x: 0, y: 0, space: null });
   const [showEditProject, setShowEditProject] = useState(false);
   const [showEditSpace,   setShowEditSpace]   = useState(null);
-  const [dialogConfig,    setDialogConfig]    = useState({ open: false, type: '', title: '', message: '', onConfirm: null });
 
   // Community unread count (DMs + community notifications), fetched from the
   // COMMUNITY backend directly — zero load on this app's backend. Same-site
@@ -172,21 +172,20 @@ export default function Sidebar({
     setContextMenu(p => ({ ...p, open: false }));
   };
 
+  // Delete with a 10s Undo window instead of a confirm dialog: the project
+  // disappears immediately, but the server delete only fires when the window
+  // closes (see scheduleDelete in App.jsx).
   const confirmDeleteProject = () => {
     if (!contextMenu.project) return;
     const proj = contextMenu.project;
-    setDialogConfig({
-      open: true, type: 'confirm',
-      title: 'Delete project',
-      message: 'Delete this project forever?',
-      onConfirm: async () => {
-        await api('delete_project', { projectId: proj.id });
-        if (currentProjectId === proj.id) onSelect(null);
-        onReorder();
-        setDialogConfig(p => ({ ...p, open: false }));
-      },
-    });
     setContextMenu(p => ({ ...p, open: false }));
+    onScheduleDelete({
+      entityId: proj.id,
+      message: `"${proj.title}" deleted`,
+      commitAction: 'delete_project',
+      commitBody: { projectId: proj.id },
+      onOptimistic: () => { if (currentProjectId === proj.id) onSelect(null); },
+    });
   };
 
   const archiveProject = async () => {
@@ -195,6 +194,17 @@ export default function Sidebar({
     setContextMenu(p => ({ ...p, open: false }));
     await api('archive_project', { projectId: proj.id });
     onReorder();
+    onToast({
+      message: `"${proj.title}" archived`,
+      duration: 10000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          await api('unarchive_project', { projectId: proj.id });
+          onReorder();
+        },
+      },
+    });
   };
 
   const unarchiveProject = async () => {
@@ -210,18 +220,16 @@ export default function Sidebar({
     if (!spaceCtxMenu.space) return;
     const space = spaceCtxMenu.space;
     const projCount = projects.filter(p => p.spaceId === space.id).length;
-    setDialogConfig({
-      open: true, type: 'confirm',
-      title: 'Delete space',
-      message: `Delete "${space.title}" and all ${projCount} project(s) inside it? This cannot be undone.`,
-      onConfirm: async () => {
-        await api('delete_space', { spaceId: space.id });
-        if (currentSpaceId === space.id) onSelectSpace(null);
-        onReorder();
-        setDialogConfig(p => ({ ...p, open: false }));
-      },
-    });
     setSpaceCtxMenu(p => ({ ...p, open: false }));
+    onScheduleDelete({
+      entityId: space.id,
+      message: projCount > 0
+        ? `"${space.title}" and ${projCount} project${projCount === 1 ? '' : 's'} deleted`
+        : `"${space.title}" deleted`,
+      commitAction: 'delete_space',
+      commitBody: { spaceId: space.id },
+      onOptimistic: () => { if (currentSpaceId === space.id) onSelectSpace(null); },
+    });
   };
 
   // ── HTML5 drag of a project row: drop onto a space header to copy ──
@@ -636,15 +644,6 @@ export default function Sidebar({
           <button className="context-menu-btn danger" onClick={() => confirmDeleteSpace()}>🗑 Delete space</button>
         </div>
       )}
-
-      <DialogModal
-        isOpen={dialogConfig.open}
-        type={dialogConfig.type}
-        title={dialogConfig.title}
-        message={dialogConfig.message}
-        onConfirm={dialogConfig.onConfirm}
-        onCancel={() => setDialogConfig(p => ({ ...p, open: false }))}
-      />
 
       {showEditProject && contextMenu.project && (
         <ProjectModal
