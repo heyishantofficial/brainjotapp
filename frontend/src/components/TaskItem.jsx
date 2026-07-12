@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { api, apiUpload, apiUrl } from '../api';
@@ -57,6 +57,13 @@ export default function TaskItem({
   // Smooth add/remove animation for the attached-files list and chat thread
   const [taskFilesRef] = useAutoAnimate();
   const [chatAnimRef] = useAutoAnimate();
+  // Stable merged ref — an inline `ref={el => ...}` gets a new identity every
+  // render, so React re-invokes it each render; auto-animate's setter calls
+  // setState inside, which turns that into an infinite render loop (React #185).
+  const chatThreadMergedRef = useCallback((el) => {
+    chatThreadRef.current = el;
+    chatAnimRef(el);
+  }, [chatAnimRef]);
 
   const fileCount = (task.files || []).length;
   const hasNotes = (task.notes || '').trim().length > 0 || (task.richNotes || '').trim().length > 0;
@@ -629,7 +636,7 @@ export default function TaskItem({
           <div className="task-panel-label" style={{ marginBottom: '10px' }}>Task Discussion</div>
 
           {/* Messages thread */}
-          <div ref={(el) => { chatThreadRef.current = el; chatAnimRef(el); }} style={{
+          <div ref={chatThreadMergedRef} style={{
             display: 'flex', flexDirection: 'column', gap: '8px',
             maxHeight: '300px', overflowY: 'auto', paddingRight: '2px', marginBottom: '10px',
           }}>
