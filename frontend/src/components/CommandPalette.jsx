@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 
 export default function CommandPalette({ projects, isOpen, setIsOpen, onSelectProject }) {
   const [query, setQuery] = useState('');
@@ -40,7 +41,8 @@ export default function CommandPalette({ projects, isOpen, setIsOpen, onSelectPr
       }
       // Check tasks match
       (p.tasks || []).forEach(t => {
-        if (t.text.toLowerCase().includes(q) || (t.notes && t.notes.toLowerCase().includes(q))) {
+        const notesText = `${t.notes || ''} ${t.richNotes || ''}`.replace(/<[^>]*>/g, ' ').toLowerCase();
+        if (t.text.toLowerCase().includes(q) || notesText.includes(q)) {
           searchResults.push({ type: 'task', project: p, task: t, id: `t_${t.id}` });
         }
       });
@@ -70,10 +72,10 @@ export default function CommandPalette({ projects, isOpen, setIsOpen, onSelectPr
     setIsOpen(false);
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="lightbox-overlay" onClick={() => setIsOpen(false)} style={{ alignItems: 'flex-start', paddingTop: '10vh' }}>
+    <AnimatePresence>
+    {isOpen && (
+    <motion.div className="lightbox-overlay" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} onClick={() => setIsOpen(false)} style={{ alignItems: 'flex-start', paddingTop: '10vh' }}>
       <div className="command-palette" onClick={e => e.stopPropagation()}>
         <input 
           ref={inputRef}
@@ -113,6 +115,8 @@ export default function CommandPalette({ projects, isOpen, setIsOpen, onSelectPr
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
+    )}
+    </AnimatePresence>
   );
 }

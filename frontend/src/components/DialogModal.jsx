@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 
 export default function DialogModal({ isOpen, type, title, message, initialValue, onConfirm, onCancel }) {
   const [inputValue, setInputValue] = useState(initialValue || '');
@@ -20,8 +21,6 @@ export default function DialogModal({ isOpen, type, title, message, initialValue
   }, [isOpen, initialValue, type]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  if (!isOpen) return null;
-
   const handleConfirm = () => {
     if (type === 'prompt') {
       onConfirm(inputValue);
@@ -39,7 +38,9 @@ export default function DialogModal({ isOpen, type, title, message, initialValue
   };
 
   return (
-    <div className="lightbox-overlay" onClick={onCancel} style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <AnimatePresence>
+    {isOpen && (
+    <motion.div className="lightbox-overlay" initial={false} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} onClick={onCancel} style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div className="dialog-modal" onClick={e => e.stopPropagation()}>
         <div className="dialog-header">{title}</div>
         {message && <div className="dialog-message">{message}</div>}
@@ -60,6 +61,8 @@ export default function DialogModal({ isOpen, type, title, message, initialValue
           <button className="dialog-btn confirm" onClick={handleConfirm}>{type === 'prompt' ? 'Save' : 'Confirm'}</button>
         </div>
       </div>
-    </div>
+    </motion.div>
+    )}
+    </AnimatePresence>
   );
 }

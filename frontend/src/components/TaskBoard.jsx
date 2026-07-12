@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { formatDeadline, deadlineStatus } from '../utils/deadlines';
@@ -204,16 +204,24 @@ export default function TaskBoard({
         </div>
       ))}
 
-      {draggingId && !readOnly && createPortal(
-        <div
-          className={`board-trash ${trashActive ? 'active' : ''}`}
-          onDragOver={e => { e.preventDefault(); setTrashActive(true); }}
-          onDragLeave={() => setTrashActive(false)}
-          onDrop={handleTrashDrop}
-        >
-          {trashActive ? <span style={{ fontSize: '18px', lineHeight: 1 }}>🔥</span> : <Trash2 size={16} strokeWidth={2.5} />}
-          Drop to delete
-        </div>,
+      {!readOnly && createPortal(
+        <AnimatePresence>
+          {draggingId && (
+            <motion.div
+              key="board-trash"
+              className={`board-trash ${trashActive ? 'active' : ''}`}
+              initial={false}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onDragOver={e => { e.preventDefault(); setTrashActive(true); }}
+              onDragLeave={() => setTrashActive(false)}
+              onDrop={handleTrashDrop}
+            >
+              {trashActive ? <span style={{ fontSize: '18px', lineHeight: 1 }}>🔥</span> : <Trash2 size={16} strokeWidth={2.5} />}
+              Drop to delete
+            </motion.div>
+          )}
+        </AnimatePresence>,
         document.body
       )}
     </div>

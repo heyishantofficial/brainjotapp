@@ -14,6 +14,7 @@ import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { CountUp } from '../components/ProjectCard';
 import ConfettiCelebration from '../components/ConfettiCelebration';
 import ProjectModal from '../components/ProjectModal';
+import FadeOut from '../components/FadeOut';
 import DOMPurify from 'dompurify';
 
 const VIEW_OPTIONS = [
@@ -161,11 +162,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const pct = activeTasks.length === 0 ? 0 : Math.round(activeTasks.filter(t => t.done).length / activeTasks.length * 100);
 
   useEffect(() => {
+    const el = richNotesRef.current;
     const currentRich = project.richNotes || project.notes || '';
-    if (richNotesRef.current && currentRich !== lastServerRichNotes.current) {
-      lastServerRichNotes.current = currentRich;
-      richNotesRef.current.innerHTML = DOMPurify.sanitize(currentRich);
-    }
+    if (!el || currentRich === lastServerRichNotes.current) return;
+    lastServerRichNotes.current = currentRich;
+    // Never replace the editor DOM while the user is typing in it: setting
+    // innerHTML destroys the selection (the caret jumps to the start) and
+    // drops unsaved keystrokes. The debounced save pushes the local version.
+    if (el.contains(document.activeElement)) return;
+    const sanitized = DOMPurify.sanitize(currentRich);
+    if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
   }, [project.richNotes, project.notes]);
 
   useEffect(() => {
@@ -253,13 +259,21 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
     const html = e.target.innerHTML;
     notesTimerRef.current = setTimeout(async () => {
-      const r = await api('save_project_rich_notes', { projectId: project.id, notes: html });
-      if (r?.ok === false || r?.error) {
+      try {
+        const r = await api('save_project_rich_notes', { projectId: project.id, notes: html });
+        if (r?.ok === false || r?.error) {
+          setNotesSaveError(true);
+          setNotesStatus('Failed to save');
+        } else {
+          // Remember what the server now holds so the next refetch echoing
+          // this save back isn't mistaken for a remote change.
+          lastServerRichNotes.current = html;
+          setNotesSaveError(false);
+          setNotesStatus('Saved');
+        }
+      } catch {
         setNotesSaveError(true);
         setNotesStatus('Failed to save');
-      } else {
-        setNotesSaveError(false);
-        setNotesStatus('Saved');
       }
     }, 1000);
   };
@@ -417,12 +431,20 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     api('update_task_meta', { projectId: project.id, taskId, [field]: value }).catch(() => {}).finally(onUpdate);
   };
 
-  const saveTaskNotes = async (taskId, text) => {
-    if (isSharedView && currentUserRole !== 'editor') {
-      setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, notes: text } : t));
+  // The inline editor produces rich HTML — it must persist to richNotes (the
+  // field the editor displays with priority over plain notes), otherwise the
+  // next refetch reverts the task to its stale richNotes copy.
+  const saveTaskNotes = async (taskId, html) => {
+    if (isViewerLocal) {
+      setLocalTasks(prev => prev.map(t => t.id === taskId ? { ...t, richNotes: html } : t));
       return;
     }
-    await api('save_task_notes', { projectId: project.id, taskId, notes: text });
+    onPatchTasks(project.id, ts => ts.map(t => t.id === taskId ? { ...t, richNotes: html } : t));
+    try {
+      await api('save_task_rich_notes', { projectId: project.id, taskId, notes: html });
+    } catch {
+      onToast('Could not save task notes — check your connection');
+    }
   };
 
   const handleFileUpload = async (files) => {
@@ -1006,13 +1028,17 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
         />
       )}
 
+      <AnimatePresence>
       {showEditProject && (
-        <ProjectModal 
+        <FadeOut key="edit-project">
+        <ProjectModal
           project={project}
           onClose={() => setShowEditProject(false)}
           onSuccess={() => { setShowEditProject(false); onUpdate(); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
     </div>
   );
 }

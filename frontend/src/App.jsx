@@ -23,6 +23,7 @@ import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineR
 import CallRoom from './components/CallRoom';
 import GlobalCallNotification from './components/GlobalCallNotification';
 import CallBanner from './components/CallBanner';
+import FadeOut from './components/FadeOut';
 
 // Lazy-loaded: heavy or rarely-used chunks loaded on demand
 const AdminView        = React.lazy(() => import('./views/AdminView'));
@@ -953,30 +954,46 @@ export default function App() {
       })()}
 
       <Toast toast={toastData} onClear={() => setToastData(null)} />
-      {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+      <AnimatePresence>
+        {lightboxUrl && <FadeOut key="lightbox"><Lightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} /></FadeOut>}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showAddProject && (
+        <FadeOut key="add-project">
         <ProjectModal
           spaceId={addProjectSpaceId}
           onClose={() => setShowAddProject(false)}
           onSuccess={(id) => { loadData(); setCurrentProjectId(id); setCurrentSharedSpaceId(null); setCurrentSharedProjectId(null); setShowAddProject(false); toast('Project created!'); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
+      <AnimatePresence>
       {showAddSpace && (
+        <FadeOut key="add-space">
         <SpaceModal
           onClose={() => setShowAddSpace(false)}
           onSuccess={(id) => { loadData(); if (id) setCurrentSpaceId(id); setShowAddSpace(false); toast('Space created!'); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
+      <AnimatePresence>
       {showEditSpace && (
+        <FadeOut key="edit-space">
         <SpaceModal
           space={showEditSpace}
           onClose={() => setShowEditSpace(null)}
           onSuccess={() => { loadData(); setShowEditSpace(null); toast('Space updated!'); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showWordpad.open && currentProject && (
+        <FadeOut key="wordpad">
         <React.Suspense fallback={null}>
           <WordpadModal
             project={currentProject}
@@ -988,9 +1005,12 @@ export default function App() {
             onToast={toast}
           />
         </React.Suspense>
+        </FadeOut>
       )}
+      </AnimatePresence>
 
-      {showCollab.open && (() => {
+      <AnimatePresence>
+      {showCollab.open && (<FadeOut key="collab">{(() => {
         const collabProject = (appData.projects || []).find(p => p.id === showCollab.projectId) || sharedProjects.find(p => p.id === showCollab.projectId);
         const collabSpace = collabProject?.spaceId
           ? (appData.spaces || []).find(s => s.id === collabProject.spaceId) || sharedSpaces.find(s => s.id === collabProject.spaceId)
@@ -1007,9 +1027,12 @@ export default function App() {
             currentUser={currentUser}
           />
         );
-      })()}
+      })()}</FadeOut>)}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showSpaceCollab.open && (
+        <FadeOut key="space-collab">
         <SpaceCollabModal
           spaceId={showSpaceCollab.spaceId}
           space={(appData.spaces || []).find(s => s.id === showSpaceCollab.spaceId)}
@@ -1019,7 +1042,9 @@ export default function App() {
           onToast={toast}
           currentUser={currentUser}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
 
       <NotificationModal
         isOpen={showNotifications}

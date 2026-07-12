@@ -80,11 +80,16 @@ export default function TaskItem({
   }, []);
 
   useEffect(() => {
+    const el = taskRichNotesRef.current;
     const currentRich = task.richNotes || task.notes || '';
-    if (taskRichNotesRef.current && currentRich !== lastServerRichNotes.current) {
-      lastServerRichNotes.current = currentRich;
-      taskRichNotesRef.current.innerHTML = DOMPurify.sanitize(currentRich);
-    }
+    if (!el || currentRich === lastServerRichNotes.current) return;
+    lastServerRichNotes.current = currentRich;
+    // Never replace the editor DOM while the user is typing in it: setting
+    // innerHTML destroys the selection (the caret jumps to the start) and
+    // drops unsaved keystrokes. The debounced save pushes the local version.
+    if (el.contains(document.activeElement)) return;
+    const sanitized = DOMPurify.sanitize(currentRich);
+    if (el.innerHTML !== sanitized) el.innerHTML = sanitized;
   }, [task.richNotes, task.notes]);
 
   // Sync comments from parent when project data refreshes
@@ -198,6 +203,9 @@ export default function TaskItem({
     if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
     const html = e.target.innerHTML;
     notesTimerRef.current = setTimeout(() => {
+      // Record the outgoing value first so the parent's optimistic patch and
+      // the server echo aren't mistaken for a remote change to re-render.
+      lastServerRichNotes.current = html;
       onSaveNotes(html);
       setNotesStatus('Saved');
     }, 1000);

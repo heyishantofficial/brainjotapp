@@ -33,10 +33,17 @@ export default function WordpadModal({ project, taskId, type, initialContent, on
 
   const save = async () => {
     const html = editorRef.current.innerHTML;
-    if (type === 'task') {
-      await api('save_task_rich_notes', { projectId: project.id, taskId, notes: html });
-    } else {
-      await api('save_project_rich_notes', { projectId: project.id, notes: html });
+    try {
+      const r = type === 'task'
+        ? await api('save_task_rich_notes', { projectId: project.id, taskId, notes: html })
+        : await api('save_project_rich_notes', { projectId: project.id, notes: html });
+      if (r?.ok === false || r?.error) {
+        onToast(r?.error || 'Could not save notes');
+        return; // keep the modal open so nothing is lost
+      }
+    } catch {
+      onToast('Could not save notes — check your connection');
+      return;
     }
     onToast('Wordpad notes saved');
     onSave();

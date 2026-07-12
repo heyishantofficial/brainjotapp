@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line 
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 
 function SpaceCard({ space, projects, onOpenSpace, sharedBy }) {
   const spaceProjects = projects.filter(p => p.spaceId === space.id && !p.archived);
@@ -128,6 +129,10 @@ export default function DashboardView({
   // Tasks checked off moments ago stay on their focus card briefly so the
   // checkbox animation can play before the card leaves the rail.
   const [recentlyDone, setRecentlyDone] = useState(() => new Set());
+  // Smooth add/remove/restore animation for the card grids
+  const [spacesGridRef] = useAutoAnimate();
+  const [sharedSpacesGridRef] = useAutoAnimate();
+  const [sharedProjectsGridRef] = useAutoAnimate();
 
   let doneCount  = 0;
   let totalCount = 0;
@@ -337,7 +342,9 @@ export default function DashboardView({
       <div className="view-fade">
 
       {/* Weekly recap — Mondays only, dismissed per week */}
+      <AnimatePresence initial={false}>
       {recap && (
+        <motion.div key="recap" exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25, ease: 'easeInOut' }} style={{ overflow: 'hidden' }}>
         <div style={{ padding: '24px 36px 0' }}>
           <div className="recap-card">
             <button className="recap-dismiss" onClick={dismissRecap} title="Dismiss" aria-label="Dismiss weekly recap">
@@ -364,7 +371,9 @@ export default function DashboardView({
             </div>
           </div>
         </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Stats */}
       <div className="stats-row" id="stats-row" style={{ marginBottom: '40px' }}>
@@ -442,7 +451,7 @@ export default function DashboardView({
             </div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginBottom: '56px' }}>
+          <div ref={spacesGridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginBottom: '56px' }}>
             {spaces.map(s => (
               <SpaceCard key={s.id} space={s} projects={activeProjects} onOpenSpace={onOpenSpace} />
             ))}
@@ -456,7 +465,7 @@ export default function DashboardView({
             {sharedSpaces.length > 0 && (
               <div style={{ marginBottom: '40px' }}>
                 <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '16px' }}>Spaces</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+                <div ref={sharedSpacesGridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
                   {sharedSpaces.map(s => (
                     <SpaceCard key={s.id} space={s} projects={s.projects || []} onOpenSpace={() => onOpenSharedSpace(s.id)} sharedBy={s.ownerInfo?.name} />
                   ))}
@@ -467,7 +476,7 @@ export default function DashboardView({
             {sharedProjects.length > 0 && (
               <div>
                 <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '16px' }}>Projects</div>
-                <div className="projects-grid">
+                <div className="projects-grid" ref={sharedProjectsGridRef}>
                   {sharedProjects.map(p => (
                     <div key={p.id} onDrop={e => handleDropGlobal(e, p.id)} onDragOver={e => e.preventDefault()}>
                       <ProjectCard p={p} onOpenProject={onOpenSharedProject} onReorder={onReorder} projectProgress={projectProgress} />

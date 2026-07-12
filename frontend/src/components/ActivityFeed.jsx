@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Check, RotateCcw, Pencil, Trash2, CalendarClock, CalendarX, Flag, FlagOff, UserPlus, Eraser } from 'lucide-react';
 import Avatar from './Avatar';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 
 const INITIAL_SHOWN = 8;
 
@@ -88,6 +89,8 @@ function ActivityRow({ entry, isYou }) {
 
 export default function ActivityFeed({ project, currentUser }) {
   const [showAll, setShowAll] = useState(false);
+  // Hook must run before the empty-state early return below
+  const [feedRef] = useAutoAnimate();
   const entries = [...(project.activity || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   if (entries.length === 0) {
@@ -102,7 +105,7 @@ export default function ActivityFeed({ project, currentUser }) {
   const visible = showAll ? entries : entries.slice(0, INITIAL_SHOWN);
 
   return (
-    <div>
+    <div ref={feedRef}>
       {visible.map(entry => (
         <ActivityRow key={entry.id} entry={entry} isYou={entry.userId === currentUser?.id} />
       ))}

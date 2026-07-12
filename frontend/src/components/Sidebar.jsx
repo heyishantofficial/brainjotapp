@@ -3,6 +3,7 @@ import { Users } from 'lucide-react';
 import { Reorder, useDragControls, motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import ProjectModal from './ProjectModal';
+import FadeOut from './FadeOut';
 import SpaceModal from './SpaceModal';
 
 // Community lives on its own subdomain (separate app/DB) — this is just a link
@@ -645,21 +646,29 @@ export default function Sidebar({
         </div>
       )}
 
+      <AnimatePresence>
       {showEditProject && contextMenu.project && (
+        <FadeOut key="edit-project">
         <ProjectModal
           project={contextMenu.project}
           onClose={() => setShowEditProject(false)}
           onSuccess={() => { setShowEditProject(false); onReorder(); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
 
+      <AnimatePresence>
       {showEditSpace && (
+        <FadeOut key="edit-space">
         <SpaceModal
           space={showEditSpace}
           onClose={() => setShowEditSpace(null)}
           onSuccess={() => { setShowEditSpace(null); onReorder(); }}
         />
+        </FadeOut>
       )}
+      </AnimatePresence>
     </aside>
   );
 }

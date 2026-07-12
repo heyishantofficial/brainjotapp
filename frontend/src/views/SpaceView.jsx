@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line 
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
 
@@ -44,6 +45,8 @@ export default function SpaceView({
   // Tasks checked off moments ago stay on their focus card briefly so the
   // checkbox animation can play before the card leaves the rail.
   const [recentlyDone, setRecentlyDone] = useState(() => new Set());
+  // Smooth add/remove/restore animation for the projects grid
+  const [projGridRef] = useAutoAnimate();
 
   const activeProjects = projects.filter(p => !p.archived);
   const totalTasks = activeProjects.reduce((s, p) => s + (p.tasks || []).length, 0);
@@ -329,7 +332,7 @@ export default function SpaceView({
             )}
           </div>
         ) : (
-          <div className="projects-grid" id="proj-grid">
+          <div className="projects-grid" id="proj-grid" ref={projGridRef}>
             {activeProjects.map(p => (
               <div
                 key={p.id}
