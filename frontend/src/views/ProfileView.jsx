@@ -287,7 +287,7 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
   const isAdmin = user.role === 'superadmin';
 
   return (
-    <div style={{ paddingBottom: '80px' }}>
+    <div className="view-fade" style={{ paddingBottom: '80px' }}>
       {/* Topbar */}
       <div className="topbar" style={{ position: 'relative', paddingTop: '60px', marginBottom: '0' }}>
         <button className="back-btn" style={{ position: 'absolute', top: '20px', left: '0' }} onClick={onBack}>

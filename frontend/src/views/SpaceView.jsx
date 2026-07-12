@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Bell, Search, MessageSquarePlus } from 'lucide-react';
-import { AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
@@ -93,7 +93,7 @@ export default function SpaceView({
   };
 
   return (
-    <div style={{ paddingBottom: '100px' }}>
+    <div className="view-fade" style={{ paddingBottom: '100px' }}>
 
       {/* Icon row — identical pattern to DashboardView topbar */}
       <div className="topbar" style={{ position: 'relative', paddingTop: '60px' }}>
@@ -265,12 +265,19 @@ export default function SpaceView({
             )}
           </div>
           <div className="focus-scroll-container" style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'calc(33.333% - 16px)', gap: '24px', overflowX: 'auto', paddingBottom: '16px', scrollSnapType: 'x mandatory', msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+            <AnimatePresence initial={false}>
             {topFocusTasks.map(t => (
-              <div
+              <motion.div
                 key={t.id}
+                layout
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                style={{ scrollSnapAlign: 'start', minWidth: 0 }}
+              >
+              <div
                 className="focus-task-card"
                 onClick={() => onOpenProject(t.projectId)}
-                style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', scrollSnapAlign: 'start', minWidth: 0 }}
+                style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', minWidth: 0, height: '100%' }}
               >
                 <button
                   role="checkbox"
@@ -289,7 +296,9 @@ export default function SpaceView({
                   </div>
                 </div>
               </div>
+              </motion.div>
             ))}
+            </AnimatePresence>
           </div>
         </div>
       )}

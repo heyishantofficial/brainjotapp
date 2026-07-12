@@ -337,6 +337,7 @@ export default function TaskItem({
                   onClick={(e) => { e.stopPropagation(); closeLabelPicker(); }}
                 />
                 <div
+                  className="pop-menu"
                   onMouseDown={e => e.stopPropagation()}
                   onClick={e => e.stopPropagation()}
                   style={{ position: 'fixed', top: labelPickerPos.top, left: labelPickerPos.left, zIndex: 9999, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)', minWidth: '200px', padding: '6px' }}
@@ -472,6 +473,8 @@ export default function TaskItem({
       </div>
 
       <div className={`task-panel ${isOpen ? 'open' : ''}`}>
+        <div className="task-panel-inner">
+        <div className="task-panel-content">
         <div className="task-controls-grid">
           <div>
             <div className="task-panel-label">Priority</div>
@@ -724,6 +727,8 @@ export default function TaskItem({
           )}
         </div>
 
+        </div>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Bell, Search, MessageSquarePlus, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from '../api';
 import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
@@ -287,13 +288,16 @@ export default function DashboardView({
   };
 
   const toggleTheme = () => {
+    // One-shot transition class so every surface crossfades instead of snapping
+    document.body.classList.add('theme-switching');
+    setTimeout(() => document.body.classList.remove('theme-switching'), 350);
     const isLight = document.body.classList.contains('theme-light');
     if (isLight) { document.body.classList.remove('theme-light'); localStorage.setItem('theme', 'dark'); }
     else { document.body.classList.add('theme-light'); localStorage.setItem('theme', 'light'); }
   };
 
   return (
-    <div style={{ paddingBottom: '100px' }}>
+    <div className="view-fade" style={{ paddingBottom: '100px' }}>
       <div className="topbar" style={{ position: 'relative', paddingTop: '60px' }}>
         <div style={{ width: '100%' }}>
           <div className="page-title brain-view" id="page-title" style={{ fontSize: 'max(28px, min(3.5vw, 42px))', lineHeight: '1.1', fontWeight: '800', letterSpacing: '-1.5px', maxWidth: '90%' }}>
@@ -330,7 +334,7 @@ export default function DashboardView({
       </div>
 
       {isLoading ? <DashboardSkeleton /> : (
-      <>
+      <div className="view-fade">
 
       {/* Weekly recap — Mondays only, dismissed per week */}
       {recap && (
@@ -395,12 +399,19 @@ export default function DashboardView({
             )}
           </div>
           <div className="focus-scroll-container" style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'calc(33.333% - 16px)', gap: '24px', overflowX: 'auto', paddingBottom: '16px', scrollSnapType: 'x mandatory', msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+            <AnimatePresence initial={false}>
             {topFocusTasks.map(t => (
-              <div
+              <motion.div
                 key={t.id}
+                layout
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                style={{ scrollSnapAlign: 'start', minWidth: 0 }}
+              >
+              <div
                 className="focus-task-card"
                 onClick={() => t.isShared ? onOpenSharedProject(t.projectId) : onOpenProject(t.projectId)}
-                style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', scrollSnapAlign: 'start', minWidth: 0 }}
+                style={{ background: t.projectColor, color: '#000', padding: '20px', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', minWidth: 0, height: '100%' }}
               >
                 <button role="checkbox" aria-checked={!!t.done} aria-label="Toggle task done" tabIndex={0} className={`task-check ${t.done ? 'done' : ''}`} onClick={e => handleToggleFocusTask(e, t.projectId, t.id)} style={{ width: '24px', height: '24px', borderRadius: '8px', border: t.done ? undefined : '2px solid rgba(0,0,0,0.15)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.done ? undefined : 'none', padding: 0, cursor: 'pointer' }}></button>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -411,7 +422,9 @@ export default function DashboardView({
                   </div>
                 </div>
               </div>
+              </motion.div>
             ))}
+            </AnimatePresence>
           </div>
         </div>
       )}
@@ -467,7 +480,7 @@ export default function DashboardView({
         )}
       </div>
 
-      </>
+      </div>
       )}
 
     </div>
