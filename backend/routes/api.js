@@ -1844,6 +1844,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const { projectId, notes = '' } = req.body;
     if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
     await Project.updateOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { richNotes: notes } });
+    emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
   }
