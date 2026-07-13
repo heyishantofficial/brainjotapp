@@ -70,6 +70,25 @@ function emitProjectUpdate(req, projectId) {
   req.app.get('io')?.to(`project:${projectId}`).emit('project_updated', { projectId });
 }
 
+// ── Project access filters ────────────────────────────────────────
+// Space collaborators are NOT copied into each project's collaborator list —
+// membership lives on the Space doc. These build the $or used in Project
+// queries so the parent space's role is honored too: space editors can modify
+// any project inside the space (mirroring add_project auto-adding the space
+// owner as project editor), and any space member can read them.
+async function projectEditOr(userId) {
+  const or = [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }];
+  const editorSpaceIds = await Space.distinct('id', { collaborators: { $elemMatch: { userId, role: 'editor' } } });
+  if (editorSpaceIds.length) or.push({ spaceId: { $in: editorSpaceIds } });
+  return or;
+}
+async function projectReadOr(userId) {
+  const or = [{ ownerId: userId }, { 'collaborators.userId': userId }];
+  const memberSpaceIds = await Space.distinct('id', { 'collaborators.userId': userId });
+  if (memberSpaceIds.length) or.push({ spaceId: { $in: memberSpaceIds } });
+  return or;
+}
+
 const VALID_COLLAB_ROLES = ['editor', 'viewer'];
 const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function isValidColor(c) { return typeof c === 'string' && HEX_COLOR_RE.test(c); }
@@ -638,7 +657,7 @@ router.get('/', apiLimiter, async (req, res) => {
     if (!projectId || !taskId) { res.status(400).json({ error: 'Missing data' }); return; }
     const proj = await Project.findOne({
       id: projectId,
-      $or: [{ ownerId: userId }, { 'collaborators.userId': userId }],
+      $or: await projectReadOr(userId),
     }).select('tasks -_id').lean();
     if (!proj) { res.status(404).json({ error: 'Not found' }); return; }
     const taskDoc = (proj.tasks || []).find(t => t.id === taskId);
@@ -685,7 +704,7 @@ router.get('/', apiLimiter, async (req, res) => {
       const taskAccess = await Project.exists({
         id: projectId,
         'tasks.id': taskId,
-        $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }],
+        $or: await projectEditOr(userId),
       });
       if (!taskAccess) return res.status(403).json({ error: 'No editor access to this task' });
       key = makeKey(taskId, projectId, ext);
@@ -694,7 +713,7 @@ router.get('/', apiLimiter, async (req, res) => {
       // Verify editor access before issuing a presigned URL
       const projAccess = await Project.exists({
         id: projectId,
-        $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }],
+        $or: await projectEditOr(userId),
       });
       if (!projAccess) return res.status(403).json({ error: 'No editor access to this project' });
       key = makeKey(null, projectId, ext);
@@ -718,7 +737,7 @@ router.get('/', apiLimiter, async (req, res) => {
     const entityType = projectId ? 'project' : 'space';
 
     if (projectId) {
-      const project = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }] });
+      const project = await Project.findOne({ id: projectId, $or: await projectReadOr(userId) });
       if (!project) { res.status(404).json({ error: 'Project not found or access denied' }); return; }
     } else {
       const space = await Space.findOne({ id: spaceId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId } } }] });
@@ -1675,7 +1694,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── task_toggle ──
   if (action === 'task_toggle') {
     const { projectId, taskId } = req.body;
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) {
@@ -1693,7 +1712,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'add_task') {
     const { projectId, text, priority } = req.body;
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     if (proj.tasks.length >= 1000) { res.status(429).json({ error: 'Task limit reached (1000 per project)' }); return; }
     const newId = 'task_' + uid();
@@ -1710,7 +1729,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'rename_task') {
     const { projectId, taskId, text } = req.body;
     if (!text?.trim()) { res.status(400).json({ error: 'Empty task' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) {
@@ -1727,7 +1746,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── update_task_meta ──
   if (action === 'update_task_meta') {
     const { projectId, taskId, deadline, assignee, assignees, priority, badge } = req.body;
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     let prevAssignees = [];
@@ -1786,7 +1805,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── delete_task ──
   if (action === 'delete_task') {
     const { projectId, taskId } = req.body;
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const tIdx = proj.tasks.findIndex(t => t.id === taskId);
     if (tIdx > -1) {
@@ -1805,7 +1824,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'restore_task') {
     const { projectId, task } = req.body;
     if (!task?.id || !task?.text) { res.status(400).json({ error: 'Invalid task' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const taskId_raw = String(task.id);
     const idCollision = proj.tasks.some(t => t.id === taskId_raw);
@@ -1834,7 +1853,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'save_notes') {
     const { projectId, notes = '' } = req.body;
     if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
-    await Project.updateOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { notes } });
+    await Project.updateOne({ id: projectId, $or: await projectEditOr(userId) }, { $set: { notes } });
     res.json({ ok: true });
     return;
   }
@@ -1843,7 +1862,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'save_project_rich_notes') {
     const { projectId, notes = '' } = req.body;
     if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
-    await Project.updateOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { richNotes: notes } });
+    await Project.updateOne({ id: projectId, $or: await projectEditOr(userId) }, { $set: { richNotes: notes } });
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
@@ -1853,7 +1872,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'save_task_notes') {
     const { projectId, taskId, notes = '' } = req.body;
     if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
-    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.notes': notes } });
+    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: await projectEditOr(userId) }, { $set: { 'tasks.$.notes': notes } });
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
@@ -1863,7 +1882,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'save_task_rich_notes') {
     const { projectId, taskId, notes = '' } = req.body;
     if (Buffer.byteLength(notes, 'utf8') > 200 * 1024) { res.status(413).json({ error: 'Notes too large (max 200KB)' }); return; }
-    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $set: { 'tasks.$.richNotes': notes } });
+    await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: await projectEditOr(userId) }, { $set: { 'tasks.$.richNotes': notes } });
     emitProjectUpdate(req, projectId);
     res.json({ ok: true });
     return;
@@ -1899,7 +1918,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (type === 'task') {
       if (!projectId || !taskId) return res.status(400).json({ error: 'projectId and taskId required' });
       const result = await Project.updateOne(
-        { id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] },
+        { id: projectId, 'tasks.id': taskId, $or: await projectEditOr(userId) },
         { $push: { 'tasks.$.files': fe } },
       );
       if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
@@ -1910,7 +1929,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     // type === 'project'
     if (!projectId) return res.status(400).json({ error: 'projectId required' });
     const result = await Project.updateOne(
-      { id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] },
+      { id: projectId, $or: await projectEditOr(userId) },
       { $push: { files: fe } },
     );
     if (result.matchedCount === 0) return res.status(403).json({ error: 'No access' });
@@ -1931,7 +1950,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
-    const result = await Project.updateOne({ id: pid, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { files: fe } });
+    const result = await Project.updateOne({ id: pid, $or: await projectEditOr(userId) }, { $push: { files: fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: req.file.size } });
     res.json({ ok: true, file: fe });
@@ -1950,7 +1969,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
-    const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] }, { $push: { 'tasks.$.files': fe } });
+    const result = await Project.updateOne({ id: projectId, 'tasks.id': taskId, $or: await projectEditOr(userId) }, { $push: { 'tasks.$.files': fe } });
     if (result.matchedCount === 0) { res.status(403).json({ error: 'Project not found or no editor access' }); return; }
     await User.updateOne({ id: userId }, { $inc: { storageUsedBytes: req.file.size } });
     res.json({ ok: true, file: fe });
@@ -1960,7 +1979,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── delete_file (project-level) ──
   if (action === 'delete_file') {
     const { projectId, fileId } = req.body;
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const f = proj.files.find(x => x.id === fileId);
     if (f) {
@@ -1976,7 +1995,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   // ── delete_task_file ──
   if (action === 'delete_task_file') {
     const { projectId, taskId, fileId } = req.body;
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const task = proj.tasks.find(t => t.id === taskId);
     if (task) {
@@ -2407,7 +2426,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const { projectId, taskId, text, mentions = [] } = req.body;
     if (!projectId || !taskId || !text?.trim()) { res.status(400).json({ error: 'Missing data' }); return; }
     const safeMentions = Array.isArray(mentions) ? mentions.slice(0, 20).map(String) : [];
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { 'collaborators.userId': userId }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectReadOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const taskForCap = proj.tasks.find(t => t.id === taskId);
     if (!taskForCap) { res.status(404).json({ error: 'Task not found' }); return; }
@@ -2462,7 +2481,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const { projectId, name, color } = req.body;
     if (!name?.trim()) { res.status(400).json({ error: 'Label name required' }); return; }
     if (color !== undefined && !isValidColor(color)) { res.status(400).json({ error: 'Invalid color format' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const labelId = 'lbl_' + uid();
     proj.labels.push({ id: labelId, name: name.trim().slice(0, 30), color: isValidColor(color) ? color : '#6366f1' });
@@ -2476,7 +2495,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'update_project_label') {
     const { projectId, labelId, name, color } = req.body;
     if (!labelId) { res.status(400).json({ error: 'labelId required' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     const label = proj.labels.find(l => l.id === labelId);
     if (!label) { res.status(404).json({ error: 'Label not found' }); return; }
@@ -2492,7 +2511,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
   if (action === 'delete_project_label') {
     const { projectId, labelId } = req.body;
     if (!labelId) { res.status(400).json({ error: 'labelId required' }); return; }
-    const proj = await Project.findOne({ id: projectId, $or: [{ ownerId: userId }, { collaborators: { $elemMatch: { userId, role: 'editor' } } }] });
+    const proj = await Project.findOne({ id: projectId, $or: await projectEditOr(userId) });
     if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
     proj.labels = proj.labels.filter(l => l.id !== labelId);
     proj.tasks.forEach(t => { if (t.badge === labelId) t.badge = ''; });

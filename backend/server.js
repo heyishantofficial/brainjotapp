@@ -279,6 +279,17 @@ io.on('connection', (socket) => {
           id: entityId,
           $or: [{ ownerId: userId }, { 'collaborators.userId': userId }],
         }));
+        if (!hasAccess) {
+          // Space collaborators aren't in the project's collaborator list —
+          // membership lives on the parent Space doc, so check it too.
+          const proj = await Project.findOne({ id: entityId }).select('spaceId -_id').lean();
+          if (proj?.spaceId) {
+            hasAccess = !!(await Space.exists({
+              id: proj.spaceId,
+              $or: [{ ownerId: userId }, { 'collaborators.userId': userId }],
+            }));
+          }
+        }
       } else {
         hasAccess = !!(await Space.exists({
           id: entityId,

@@ -105,17 +105,18 @@ export default function Sidebar({
     if (currentSpaceId) {
       setExpandedSpaces(prev => new Set([...prev, currentSpaceId]));
     }
-    if (currentProjectId) {
-      const proj = projects.find(p => p.id === currentProjectId);
+    const activeProjectId = currentProjectId || currentSharedProjectId;
+    if (activeProjectId) {
+      const proj = projects.find(p => p.id === activeProjectId);
       if (proj?.spaceId) setExpandedSpaces(prev => new Set([...prev, proj.spaceId]));
       // Also expand the shared space if this project lives there
       sharedSpaces.forEach(s => {
-        if ((s.projects || []).some(p => p.id === currentProjectId)) {
+        if ((s.projects || []).some(p => p.id === activeProjectId)) {
           setExpandedSpaces(prev => new Set([...prev, s.id]));
         }
       });
     }
-  }, [currentProjectId, currentSpaceId, projects, sharedSpaces]);
+  }, [currentProjectId, currentSharedProjectId, currentSpaceId, projects, sharedSpaces]);
 
   useEffect(() => {
     if (currentSharedSpaceId) {
@@ -571,8 +572,8 @@ export default function Sidebar({
                           initial={{ opacity: 0, y: -6 }}
                           animate={{ opacity: 0.9, y: 0 }}
                           transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.045, 0.35) }}
-                          className={`nav-item ${currentProjectId === p.id ? 'active' : ''}`}
-                          onClick={() => isOwned ? onSelect(p.id) : onSelectSharedSpace(s.id)}
+                          className={`nav-item ${(currentProjectId === p.id || currentSharedProjectId === p.id) ? 'active' : ''}`}
+                          onClick={() => isOwned ? onSelect(p.id) : onSelectShared(p.id)}
                           style={{ paddingLeft: '28px', fontSize: '13px', width: '100%' }}
                         >
                           <span className="nav-dot" style={{ background: p.color }}></span>

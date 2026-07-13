@@ -660,7 +660,12 @@ export default function App() {
   }
 
   const currentProject = (appData.projects || []).find(p => p.id === currentProjectId);
-  const currentSharedProject = sharedProjects.find(p => p.id === currentSharedProjectId);
+  // Projects nested inside shared spaces aren't in sharedProjects — resolve them
+  // from the space, inheriting the space-level role so viewer/editor gating applies.
+  const currentSharedProject = currentSharedProjectId
+    ? (sharedProjects.find(p => p.id === currentSharedProjectId)
+      || sharedSpaces.flatMap(s => (s.projects || []).map(p => ({ ...p, myRole: s.myRole, ownerInfo: s.ownerInfo }))).find(p => p.id === currentSharedProjectId))
+    : undefined;
   const currentSharedSpace = sharedSpaces.find(s => s.id === currentSharedSpaceId);
   const currentSpace = appData.spaces?.find(s => s.id === currentSpaceId);
   const activeView = currentSharedProject ? 'shared' : currentSharedSpace ? 'shared-space' : currentProjectId ? 'project' : currentSpaceId && currentSpace ? 'space' : 'dashboard';
@@ -776,7 +781,13 @@ export default function App() {
             space={currentSharedSpace}
             projects={(currentSharedSpace.projects || []).filter(p => !p.archived)}
             onToggleTask={toggleTaskOptimistic}
-            onOpenProject={(pid) => { setCurrentProjectId(pid); setCurrentSharedProjectId(null); setCurrentSharedSpaceId(null); }}
+            onOpenProject={(pid) => {
+              // My own projects in this space use the owner view; everyone else's
+              // open through the shared path, which carries role-based gating.
+              if ((appData.projects || []).some(p => p.id === pid)) { setCurrentProjectId(pid); setCurrentSharedProjectId(null); }
+              else { setCurrentSharedProjectId(pid); setCurrentProjectId(null); }
+              setCurrentSharedSpaceId(null);
+            }}
             onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
             canAddProject={currentSharedSpace.myRole === 'editor'}
@@ -863,7 +874,12 @@ export default function App() {
                 isSharedView={true}
                 sharedBy={currentSharedProject.sharedBy}
                 currentUserRole={currentSharedProject.myRole || 'viewer'}
-                onBack={() => setCurrentSharedProjectId(null)}
+                onBack={() => {
+                  const spaceId = currentSharedProject?.spaceId;
+                  setCurrentSharedProjectId(null);
+                  const parentSharedSpace = spaceId ? sharedSpaces.find(s => s.id === spaceId) : null;
+                  if (parentSharedSpace) setCurrentSharedSpaceId(parentSharedSpace.id);
+                }}
                 onUpdate={loadData}
                 onToast={toast}
                 highlightedTaskId={highlightedTaskId}
