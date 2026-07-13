@@ -100,19 +100,29 @@ export default function Sidebar({
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
+  // Adds an id to expandedSpaces only if it's not already there, so callers
+  // that fire redundantly (e.g. this effect re-running right after a click
+  // handler already expanded the space) don't create a new Set reference.
+  // A new reference triggers a re-render even though nothing changed, and
+  // that extra render — landing mid-flight — is what caused the sidebar's
+  // layout("position") slide animation to visibly jump/correct.
+  const expandSpace = (id) => {
+    setExpandedSpaces(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
+
   // Auto-expand the space that contains the active project or the active space
   useEffect(() => {
     if (currentSpaceId) {
-      setExpandedSpaces(prev => new Set([...prev, currentSpaceId]));
+      expandSpace(currentSpaceId);
     }
     const activeProjectId = currentProjectId || currentSharedProjectId;
     if (activeProjectId) {
       const proj = projects.find(p => p.id === activeProjectId);
-      if (proj?.spaceId) setExpandedSpaces(prev => new Set([...prev, proj.spaceId]));
+      if (proj?.spaceId) expandSpace(proj.spaceId);
       // Also expand the shared space if this project lives there
       sharedSpaces.forEach(s => {
         if ((s.projects || []).some(p => p.id === activeProjectId)) {
-          setExpandedSpaces(prev => new Set([...prev, s.id]));
+          expandSpace(s.id);
         }
       });
     }
@@ -120,7 +130,7 @@ export default function Sidebar({
 
   useEffect(() => {
     if (currentSharedSpaceId) {
-      setExpandedSpaces(prev => new Set([...prev, currentSharedSpaceId]));
+      expandSpace(currentSharedSpaceId);
     }
   }, [currentSharedSpaceId]);
 
@@ -148,7 +158,7 @@ export default function Sidebar({
     if (isSpaceViewActive && isExpanded) {
       setExpandedSpaces(prev => { const next = new Set(prev); next.delete(space.id); return next; });
     } else {
-      setExpandedSpaces(prev => new Set([...prev, space.id]));
+      expandSpace(space.id);
       onSelectSpace(space.id);
       onSelect(null);
     }
@@ -160,7 +170,7 @@ export default function Sidebar({
     if (isActive && isExpanded) {
       setExpandedSpaces(prev => { const next = new Set(prev); next.delete(space.id); return next; });
     } else {
-      setExpandedSpaces(prev => new Set([...prev, space.id]));
+      expandSpace(space.id);
       onSelectSharedSpace(space.id);
     }
   };
