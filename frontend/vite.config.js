@@ -42,6 +42,9 @@ export default defineConfig({
         ]
       },
       workbox: {
+        // Web Push handlers live in public/push-sw.js and are imported into
+        // the generated SW — generateSW mode has nowhere else to put them.
+        importScripts: ['push-sw.js'],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {

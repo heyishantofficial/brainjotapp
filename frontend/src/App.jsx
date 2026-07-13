@@ -19,7 +19,8 @@ import CollabModal from './components/CollabModal';
 import SpaceCollabModal from './components/SpaceCollabModal';
 import NotificationModal from './components/NotificationModal';
 import ProfileView from './views/ProfileView';
-import { requestNotificationPermission, scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
+import { scheduleDeadlineReminders, stopDeadlineReminders } from './utils/notifications';
+import { enablePush, syncPushIfGranted, disablePushForLogout } from './utils/push';
 import CallRoom from './components/CallRoom';
 import GlobalCallNotification from './components/GlobalCallNotification';
 import CallBanner from './components/CallBanner';
@@ -356,6 +357,10 @@ export default function App() {
       debounce = setTimeout(loadData, 500);
     });
 
+    // Instant notification delivery — refetch right away instead of waiting
+    // for the 20s poll. The unreadCount effect plays the chime.
+    socket.on('notification:new', () => loadNotifications());
+
     // ── Call signal events ────────────────────────────────────────
     socket.on('call:started', ({ callId, hostUserId, hostName, callType }) => {
       if (hostUserId === currentUser?.id) return;
@@ -397,7 +402,7 @@ export default function App() {
     });
 
     return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
-  }, [loggedIn, loadData]);
+  }, [loggedIn, loadData, loadNotifications]);
 
   // Join/leave the appropriate socket room when active view changes
   const activeProjectId = currentProjectId || currentSharedProjectId;
@@ -429,6 +434,7 @@ export default function App() {
         setLivekitEnabled(r.features?.livekit === true);
         loadData();
         loadNotifications();
+        syncPushIfGranted(); // silent — re-attaches this browser's push subscription, never prompts
       } else {
         setLoading(false);
       }
@@ -497,6 +503,8 @@ export default function App() {
     pendingDeletesRef.current.clear();
     track('logged_out');
     resetAnalytics();
+    // Detach this browser's push subscription while the session cookie is still valid
+    await disablePushForLogout();
     await api('logout');
     // Clear all SW caches so stale authenticated data isn't served to the next user on this browser
     if ('caches' in window) {
@@ -622,7 +630,7 @@ export default function App() {
       identifyUser(user);
       loadData();
       loadNotifications();
-      requestNotificationPermission();
+      enablePush();
     }} onOpenPrivacy={() => setStaticPage('privacy')} onOpenTerms={() => setStaticPage('terms')} />;
   }
 
@@ -641,7 +649,7 @@ export default function App() {
       identifyUser(user);
       loadData();
       loadNotifications();
-      requestNotificationPermission();
+      enablePush();
     }} onOpenPrivacy={() => setStaticPage('privacy')} onOpenTerms={() => setStaticPage('terms')} />;
   }
 

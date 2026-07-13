@@ -22,6 +22,8 @@ const LoginAttempt = require('../models/LoginAttempt');
 const { OAuth2Client } = require('google-auth-library');
 const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
 const { livekitEnabled, ActiveCall, generateToken, removeParticipant, LIVEKIT_URL } = require('../utils/livekit');
+const PushSubscription = require('../models/PushSubscription');
+const { pushEnabled, VAPID_PUBLIC_KEY, pushPayloadFor, sendPushToUser } = require('../utils/push');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -68,6 +70,20 @@ function checkPwnedPassword(password) {
 
 function emitProjectUpdate(req, projectId) {
   req.app.get('io')?.to(`project:${projectId}`).emit('project_updated', { projectId });
+}
+
+// Real-time + push delivery for freshly inserted notifications. The socket
+// event nudges open tabs to refetch instantly (instead of waiting for the 20s
+// poll); web push reaches users with no tab open at all. Both are best-effort
+// — the notification row is already in Mongo, so the poll remains the fallback.
+function deliverNotifications(req, docs) {
+  const list = Array.isArray(docs) ? docs : [docs];
+  const io = req.app.get('io');
+  for (const n of list) {
+    if (!n?.toUserId) continue;
+    io?.to(`user:${n.toUserId}`).emit('notification:new', { id: n.id, type: n.type });
+    sendPushToUser(n.toUserId, pushPayloadFor(n)); // fire-and-forget, never throws
+  }
 }
 
 // ── Project access filters ────────────────────────────────────────
@@ -593,6 +609,12 @@ router.get('/', apiLimiter, async (req, res) => {
     const notifs = await Notification.find({ toUserId: userId })
       .sort({ createdAt: -1 }).limit(50).lean();
     res.json({ notifications: notifs.map(({ _id, __v, ...n }) => n) });
+    return;
+  }
+
+  // ── get_push_key ── VAPID public key for pushManager.subscribe(); null → push disabled
+  if (action === 'get_push_key') {
+    res.json({ key: pushEnabled ? VAPID_PUBLIC_KEY : null });
     return;
   }
 
@@ -1427,6 +1449,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
       Space.updateMany({ 'collaborators.userId': userId }, { $pull: { collaborators: { userId } } }),
       // Remove pending notifications to/from this user
       Notification.deleteMany({ $or: [{ toUserId: userId }, { fromUserId: userId }] }),
+      PushSubscription.deleteMany({ userId }),
     ]);
     req.session.destroy(() => res.json({ ok: true }));
     return;
@@ -1794,7 +1817,10 @@ router.post('/', apiLimiter, async (req, res, next) => {
             status: 'pending',
           });
         }
-        if (notifDocs.length) await Notification.insertMany(notifDocs);
+        if (notifDocs.length) {
+          await Notification.insertMany(notifDocs);
+          deliverNotifications(req, notifDocs);
+        }
       }
     }
     emitProjectUpdate(req, projectId);
@@ -2218,13 +2244,14 @@ router.post('/', apiLimiter, async (req, res, next) => {
     if (target) {
       const alreadyPending = await Notification.findOne({ toUserId: target.id, fromUserId: userId, type: 'collab_invite', 'meta.entityId': entityId, status: 'pending' });
       if (!alreadyPending) {
-        await Notification.create({
+        const inviteNotif = await Notification.create({
           id: 'notif_' + uid(), toUserId: target.id, fromUserId: userId,
           fromUsername: fromUser.username, fromName: fromUser.name, fromAvatarUrl: fromUser.avatarUrl || '',
           type: 'collab_invite',
           meta: { entityId, entityType, entityTitle, role, inviteToken: token },
           status: 'pending',
         });
+        deliverNotifications(req, inviteNotif);
       }
       res.json({ ok: true, invitedName: target.name });
     } else {
@@ -2337,14 +2364,15 @@ router.post('/', apiLimiter, async (req, res, next) => {
       );
     }
     
-    await Notification.create({
+    const joinNotif = await Notification.create({
       id: 'notif_' + uid(), toUserId: entity.ownerId, fromUserId: userId,
       fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
       type: 'invite_response',
       meta: { entityId: entity.id, entityType, entityTitle: entity.title, role, accepted: true },
       status: 'pending',
     });
-    
+    deliverNotifications(req, joinNotif);
+
     res.json({ ok: true, entityType, entityId: entity.id, entityTitle: entity.title, role });
     return;
   }
@@ -2375,15 +2403,47 @@ router.post('/', apiLimiter, async (req, res, next) => {
     
     // Notify the inviter of the response (accept or deny)
     if (notif.fromUserId) {
-      await Notification.create({
+      const responseNotif = await Notification.create({
         id: 'notif_' + uid(), toUserId: notif.fromUserId, fromUserId: userId,
         fromUsername: me.username || '', fromName: me.name, fromAvatarUrl: me.avatarUrl || '',
         type: 'invite_response',
         meta: { entityId: notif.meta.entityId, entityType: notif.meta.entityType, entityTitle: notif.meta.entityTitle, role: notif.meta.role, accepted: accept },
         status: 'pending',
       });
+      deliverNotifications(req, responseNotif);
     }
     res.json({ ok: true, accepted: accept });
+    return;
+  }
+
+  // ── subscribe_push ── store/refresh this browser's push subscription.
+  // Upsert on endpoint: re-subscribing (or a different user logging into the
+  // same browser) takes the subscription over instead of duplicating it.
+  if (action === 'subscribe_push') {
+    const sub = req.body?.subscription;
+    if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
+      res.status(400).json({ error: 'Invalid subscription' }); return;
+    }
+    if (typeof sub.endpoint !== 'string' || sub.endpoint.length > 1024 || !/^https:\/\//.test(sub.endpoint)) {
+      res.status(400).json({ error: 'Invalid endpoint' }); return;
+    }
+    const count = await PushSubscription.countDocuments({ userId });
+    const exists = await PushSubscription.findOne({ endpoint: sub.endpoint }).select('_id').lean();
+    if (!exists && count >= 10) { res.status(429).json({ error: 'Too many devices subscribed' }); return; }
+    await PushSubscription.updateOne(
+      { endpoint: sub.endpoint },
+      { $set: { userId, keys: { p256dh: String(sub.keys.p256dh).slice(0, 256), auth: String(sub.keys.auth).slice(0, 256) }, userAgent: String(req.headers['user-agent'] || '').slice(0, 200) } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── unsubscribe_push ── called on logout / when the user turns push off
+  if (action === 'unsubscribe_push') {
+    const { endpoint } = req.body || {};
+    if (endpoint) await PushSubscription.deleteOne({ endpoint: String(endpoint), userId });
+    res.json({ ok: true });
     return;
   }
 
@@ -2467,6 +2527,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
       });
       if (recentOutgoing + allNotifs.length <= 100) {
         await Notification.insertMany(allNotifs);
+        deliverNotifications(req, allNotifs);
       } else {
         logger.warn({ userId, recentOutgoing, attempted: allNotifs.length }, '[rate_limit] notification outgoing limit reached');
       }
