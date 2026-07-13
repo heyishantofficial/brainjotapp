@@ -529,7 +529,7 @@ body.theme-light .task-check.done::after{color:#fff}
 @keyframes check-glyph{0%{transform:scale(0) rotate(-30deg);opacity:0}100%{transform:scale(1) rotate(0deg);opacity:1}}
 @keyframes check-ring{0%{box-shadow:0 0 0 0 var(--accent-ring)}100%{box-shadow:0 0 0 12px rgba(0,0,0,0)}}
 
-.task-text-el{font-size:16px;flex:1;line-height:1.5; outline:none; border:none; background:transparent; color:inherit; font-family:inherit; position:relative}
+.task-text-el{font-size:16px;flex:1;min-width:0;line-height:1.5; outline:none; border:none; background:transparent; color:inherit; font-family:inherit; position:relative; overflow-wrap:break-word; word-break:break-word}
 /* Animated strike-through: the line draws across instead of appearing instantly */
 .task-text-el.done{color:var(--faint)}
 .task-text-el.done::after{content:'';position:absolute;left:0;top:50%;height:1.5px;width:100%;background:var(--faint);animation:strike-draw .35s var(--ease)}

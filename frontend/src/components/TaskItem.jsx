@@ -301,11 +301,12 @@ export default function TaskItem({
           <div className="task-text-edit" onClick={e => e.stopPropagation()}>
             <input 
               autoFocus
-              className="task-text-input" 
-              value={editText} 
-              onChange={e => setEditText(e.target.value)} 
+              className="task-text-input"
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
               onBlur={submitEdit}
               onKeyDown={e => e.key === 'Enter' && submitEdit()}
+              maxLength={200}
             />
           </div>
         ) : (

@@ -44,6 +44,7 @@ function BoardAddCard({ colKey, onAddTask }) {
         placeholder="Add a task..."
         value={text}
         onChange={e => setText(e.target.value)}
+        maxLength={200}
         onKeyDown={e => {
           if (e.key === 'Enter') submit();
           if (e.key === 'Escape') { setAdding(false); setText(''); }

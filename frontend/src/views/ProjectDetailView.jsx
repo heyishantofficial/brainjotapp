@@ -856,6 +856,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                   value={newTaskText}
                   onChange={e => setNewTaskText(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addTask()}
+                  maxLength={200}
                 />
                 <button className="btn-add" onClick={addTask}>Add</button>
               </div>
