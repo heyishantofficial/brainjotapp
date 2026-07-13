@@ -257,7 +257,7 @@ export default function SpaceView({
 
       {/* Today's Focus */}
       {topFocusTasks.length > 0 && (
-        <div className="focus-section" style={{ padding: '0 36px', marginBottom: '48px' }}>
+        <div key={space.id} className="focus-section" style={{ padding: '0 36px', marginBottom: '48px' }}>
           <div className="focus-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h2 style={{ fontSize: 'min(24px, 6vw)', fontWeight: '800', letterSpacing: '-0.8px', margin: 0 }}>Today's Focus</h2>
