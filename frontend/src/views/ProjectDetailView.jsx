@@ -38,6 +38,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(`bj_view_${project.id}`) || 'list');
   const [showViewMenu, setShowViewMenu] = useState(false);
+  const [activityCollapsed, setActivityCollapsed] = useState(() => localStorage.getItem('bj_activity_collapsed') === '1');
   // Internal highlight target for "jump to list" from Board/Calendar
   const [focusTaskId, setFocusTaskId] = useState(null);
   // Tasks checked off in the last moment: they hold their spot in the active
@@ -1010,13 +1011,49 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
           {/* ── Activity Feed ── */}
           <div className="section-card">
-            <div className="section-head">
+            <div
+              className="section-head"
+              role="button"
+              tabIndex={0}
+              aria-expanded={!activityCollapsed}
+              onClick={() => setActivityCollapsed(c => { localStorage.setItem('bj_activity_collapsed', c ? '0' : '1'); return !c; })}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
+              style={{
+                cursor: 'pointer', userSelect: 'none',
+                borderBottomColor: activityCollapsed ? 'transparent' : undefined,
+                transition: 'border-color 0.3s ease',
+              }}
+            >
               <span className="section-head-title">Activity</span>
-              <span style={{ fontSize: '11px', color: 'var(--faint)' }}>Recent changes</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--faint)' }}>Recent changes</span>
+                <ChevronDown
+                  size={15}
+                  strokeWidth={2.5}
+                  style={{
+                    color: 'var(--muted)', flexShrink: 0,
+                    transform: activityCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  }}
+                />
+              </span>
             </div>
-            <div className="section-body">
-              <ActivityFeed project={project} currentUser={currentUser} />
-            </div>
+            <AnimatePresence initial={false}>
+              {!activityCollapsed && (
+                <motion.div
+                  key="activity-body"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ height: { duration: 0.3, ease: [0.4, 0, 0.2, 1] }, opacity: { duration: 0.2 } }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <div className="section-body">
+                    <ActivityFeed project={project} currentUser={currentUser} />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
