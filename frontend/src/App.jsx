@@ -43,6 +43,80 @@ const Spinner = () => (
 );
 
 
+let activeAudioCtx = null;
+let activeOscillators = [];
+
+function playSingleRing() {
+  if (localStorage.getItem('soundEnabled') === 'false') return;
+  try {
+    if (activeAudioCtx && activeAudioCtx.state !== 'closed') {
+      try { activeAudioCtx.close(); } catch {}
+    }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    activeAudioCtx = ctx;
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc1.frequency.value = 440;
+    osc2.frequency.value = 480;
+
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.frequency.value = 18;
+    lfoGain.gain.value = 12;
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc1.frequency);
+    lfoGain.connect(osc2.frequency);
+
+    osc1.connect(gainNode);
+    osc2.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    gainNode.gain.setValueAtTime(0, ctx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.08);
+    gainNode.gain.setValueAtTime(0.12, ctx.currentTime + 1.6);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.8);
+
+    lfo.start();
+    osc1.start();
+    osc2.start();
+
+    activeOscillators = [osc1, osc2, lfo];
+
+    lfo.stop(ctx.currentTime + 1.8);
+    osc1.stop(ctx.currentTime + 1.8);
+    osc2.stop(ctx.currentTime + 1.8);
+
+    setTimeout(() => {
+      try {
+        if (activeAudioCtx === ctx) {
+          ctx.close();
+          activeAudioCtx = null;
+          activeOscillators = [];
+        }
+      } catch {}
+    }, 2000);
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function forceStopRinging() {
+  if (activeAudioCtx) {
+    try {
+      activeOscillators.forEach(osc => {
+        try { osc.stop(); } catch {}
+      });
+      activeAudioCtx.close();
+    } catch {}
+    activeAudioCtx = null;
+    activeOscillators = [];
+  }
+}
+
 function playNotifChime() {
   if (localStorage.getItem('soundEnabled') === 'false') return;
   try {
@@ -403,6 +477,38 @@ export default function App() {
 
     return () => { clearTimeout(debounce); socket.disconnect(); socketRef.current = null; };
   }, [loggedIn, loadData, loadNotifications]);
+
+  // Loop a phone ring sound when there are active incoming calls
+  const ringIntervalRef = useRef(null);
+  const startRinging = useCallback(() => {
+    if (ringIntervalRef.current) return;
+    playSingleRing();
+    ringIntervalRef.current = setInterval(playSingleRing, 4000);
+  }, []);
+
+  const stopRinging = useCallback(() => {
+    if (ringIntervalRef.current) {
+      clearInterval(ringIntervalRef.current);
+      ringIntervalRef.current = null;
+    }
+    forceStopRinging();
+  }, []);
+
+  useEffect(() => {
+    if (!loggedIn || myActiveCall) {
+      stopRinging();
+      return;
+    }
+    const incoming = Array.from(activeCalls.entries()).some(([callId, call]) => 
+      call.hostUserId !== currentUser?.id && !dismissedCalls.has(callId)
+    );
+    if (incoming) {
+      startRinging();
+    } else {
+      stopRinging();
+    }
+    return () => stopRinging();
+  }, [activeCalls, dismissedCalls, myActiveCall, loggedIn, currentUser, startRinging, stopRinging]);
 
   // Join/leave the appropriate socket room when active view changes
   const activeProjectId = currentProjectId || currentSharedProjectId;
