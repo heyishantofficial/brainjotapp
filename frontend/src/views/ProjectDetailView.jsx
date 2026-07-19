@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Search, MessageSquarePlus, ChevronDown, LayoutList, SquareKanban, Calendar } from 'lucide-react';
+import { Bell, Search, MessageSquarePlus, ChevronDown, LayoutList, SquareKanban, Calendar, Plus } from 'lucide-react';
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
 import { api, apiForm, apiUpload, apiUrl } from '../api';
@@ -25,6 +25,10 @@ const VIEW_OPTIONS = [
 
 export default function ProjectDetailView({ project, onBack, onUpdate, onToast, onOpenWordpad, onOpenCollab, onOpenLightbox, highlightedTaskId, isSharedView = false, sharedBy = '', currentUserRole = 'owner', onOpenSearch, onOpenNotifications, onOpenFeedback, unreadNotifications = 0, currentUser, spaceCollaborators = [], livekitEnabled = false, onStartCall, incomingCall, onRequestJoinCall, onJoinInvitedCall, callRequestSent = false, isInCall = false, onDismissCallBanner, onPatchTasks, onScheduleTaskDelete }) {
   const [newTaskText, setNewTaskText] = useState('');
+  // Mobile/tablet FAB quick-add sheet — separate text state so the floating
+  // sheet and the inline add-row never leak drafts into each other
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddText, setQuickAddText] = useState('');
   const [notesStatus, setNotesStatus] = useState('Saved');
   const [showCelebration, setShowCelebration] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
@@ -242,6 +246,16 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       return;
     }
     optimisticAdd(text, undefined, 'list_view');
+  };
+
+  // Mobile/tablet FAB sheet — same optimistic path as the inline add-row.
+  // The FAB only renders for users who can write, so no isViewerLocal branch.
+  const submitQuickAdd = () => {
+    const text = quickAddText.trim();
+    if (!text) return;
+    setQuickAddText('');
+    setShowQuickAdd(false);
+    optimisticAdd(text, undefined, 'mobile_fab');
   };
 
   // Quick-add from a Board column: the new task lands with that column's priority
@@ -1083,6 +1097,49 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
         </FadeOut>
       )}
       </AnimatePresence>
+
+      {/* Mobile/tablet only (CSS-gated): floating + button opening a bottom
+          quick-add sheet. Desktop keeps just the inline add-row. */}
+      {(!isSharedView || currentUserRole === 'editor') && (
+        <>
+          <button className="fab-add-task" onClick={() => setShowQuickAdd(true)} aria-label="Add a task">
+            <Plus size={26} strokeWidth={2.75} />
+          </button>
+          <AnimatePresence>
+            {showQuickAdd && (
+              <motion.div
+                key="quick-add"
+                className="quick-add-overlay"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                onClick={() => setShowQuickAdd(false)}
+              >
+                <motion.div
+                  className="quick-add-sheet"
+                  initial={{ y: '100%' }}
+                  animate={{ y: 0 }}
+                  exit={{ y: '100%' }}
+                  transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <input
+                    className="add-input"
+                    placeholder="Add a task..."
+                    value={quickAddText}
+                    autoFocus
+                    maxLength={200}
+                    onChange={e => setQuickAddText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd(); if (e.key === 'Escape') setShowQuickAdd(false); }}
+                  />
+                  <button className="btn-add" onClick={submitQuickAdd}>Add</button>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
     </div>
   );
 }
