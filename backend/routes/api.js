@@ -199,7 +199,7 @@ async function sendInviteEmail({ to, toName, inviterName, projectTitle, spaceTit
 }
 
 const SALT_ROUNDS = 12;
-const MAX_STORAGE_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB per user
+const MAX_STORAGE_BYTES = 200 * 1024 * 1024; // 200 MB per user (free tier)
 
 // ── Multer setup ──────────────────────────────────────────────────
 const ALLOWED_EXT = new Set([
@@ -720,7 +720,7 @@ router.get('/', apiLimiter, async (req, res) => {
       const usedBytes = uploader?.storageUsedBytes || 0;
       const requestedBytes = Number(size) || 0;
       if (usedBytes + requestedBytes > MAX_STORAGE_BYTES) {
-        return res.status(413).json({ error: `Storage quota exceeded. You have used ${Math.round(usedBytes / 1024 / 1024)} MB of your ${Math.round(MAX_STORAGE_BYTES / 1024 / 1024)} MB limit.` });
+        return res.status(413).json({ code: 'storage_limit', error: `Storage quota exceeded. You have used ${Math.round(usedBytes / 1024 / 1024)} MB of your ${Math.round(MAX_STORAGE_BYTES / 1024 / 1024)} MB limit.` });
       }
     }
 
@@ -2023,7 +2023,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const uploader = await User.findOne({ id: userId }).select('storageUsedBytes -_id').lean();
     if ((uploader?.storageUsedBytes || 0) + req.file.size > MAX_STORAGE_BYTES) {
       fs.unlinkSync(req.file.path);
-      return res.status(413).json({ error: 'Storage quota exceeded (1 GB limit)' });
+      return res.status(413).json({ code: 'storage_limit', error: 'Storage quota exceeded (200 MB limit)' });
     }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };
@@ -2042,7 +2042,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
     const uploader = await User.findOne({ id: userId }).select('storageUsedBytes -_id').lean();
     if ((uploader?.storageUsedBytes || 0) + req.file.size > MAX_STORAGE_BYTES) {
       fs.unlinkSync(req.file.path);
-      return res.status(413).json({ error: 'Storage quota exceeded (1 GB limit)' });
+      return res.status(413).json({ code: 'storage_limit', error: 'Storage quota exceeded (200 MB limit)' });
     }
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
     const fe = { id: uid(), name: req.file.originalname, file: req.file.filename, url: filePublicUrl(req.file.filename), type: ext, size: req.file.size, uploaded: now() };

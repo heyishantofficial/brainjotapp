@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { CountUp } from '../components/ProjectCard';
 import ConfettiCelebration from '../components/ConfettiCelebration';
+import StorageLimitModal from '../components/StorageLimitModal';
 import ProjectModal from '../components/ProjectModal';
 import FadeOut from '../components/FadeOut';
 import DOMPurify from 'dompurify';
@@ -34,6 +35,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [showEditProject, setShowEditProject] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { done: number, total: number }
+  const [showStorageLimit, setShowStorageLimit] = useState(false);
   const [notesSaveError, setNotesSaveError] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
@@ -470,7 +472,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
     setUploadProgress({ done: 0, total: files.length });
     for (let i = 0; i < files.length; i++) {
       const r = await apiUpload(files[i], { type: 'project', projectId: project.id });
-      if (r?.error) { onToast(r.error); }
+      if (r?.code === 'storage_limit') { setShowStorageLimit(true); }
+      else if (r?.error) { onToast(r.error); }
       setUploadProgress({ done: i + 1, total: files.length });
     }
     fileInputRef.current.value = '';
@@ -852,6 +855,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       onOpenWordpad={(content) => onOpenWordpad('task', t.id, content)}
                       onUploadComplete={onUpdate}
                       onToast={onToast}
+                      onStorageLimit={() => setShowStorageLimit(true)}
                       onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                       onOpenLightbox={onOpenLightbox}
                       highlighted={highlightedTaskId === t.id || focusTaskId === t.id}
@@ -906,6 +910,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           onOpenWordpad={(content) => onOpenWordpad('task', t.id, content)}
                           onUploadComplete={onUpdate}
                           onToast={onToast}
+                          onStorageLimit={() => setShowStorageLimit(true)}
                           onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                           onOpenLightbox={onOpenLightbox}
                           highlighted={highlightedTaskId === t.id || focusTaskId === t.id}
@@ -1080,11 +1085,17 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
       </div>
 
       {showCelebration && (
-        <ConfettiCelebration 
+        <ConfettiCelebration
           key={celebrationKey}
-          onDone={() => setShowCelebration(false)} 
+          onDone={() => setShowCelebration(false)}
         />
       )}
+
+      <StorageLimitModal
+        isOpen={showStorageLimit}
+        onClose={() => setShowStorageLimit(false)}
+        onUpgrade={() => { setShowStorageLimit(false); onToast('Pro is coming soon — stay tuned!'); }}
+      />
 
       <AnimatePresence>
       {showEditProject && (

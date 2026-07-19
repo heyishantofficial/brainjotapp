@@ -23,6 +23,7 @@ export default function TaskItem({
   onOpenWordpad,
   onUploadComplete,
   onToast,
+  onStorageLimit,
   onDeleteFile,
   onOpenLightbox,
   highlighted,
@@ -274,7 +275,8 @@ export default function TaskItem({
     if (!files || files.length === 0) return;
     for (let i = 0; i < files.length; i++) {
       const r = await apiUpload(files[i], { type: 'task', projectId: project.id, taskId: task.id });
-      if (r?.error) onToast?.(r.error);
+      if (r?.code === 'storage_limit') onStorageLimit?.();
+      else if (r?.error) onToast?.(r.error);
     }
     fileInputRef.current.value = '';
     onUploadComplete();
