@@ -1699,6 +1699,44 @@ router.post('/', apiLimiter, async (req, res, next) => {
     return;
   }
 
+  // ── leave_project ──
+  // Self-service opt-out: a collaborator removes themself from a shared project.
+  // Matched by userId (not collaboratorId) so a user can only ever remove their
+  // own membership — owners must delete the project instead.
+  if (action === 'leave_project') {
+    const { projectId } = req.body;
+    if (!projectId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const proj = await Project.findOne({ id: projectId, 'collaborators.userId': userId });
+    if (!proj) { res.status(404).json({ error: 'Project not found' }); return; }
+    if (proj.ownerId === userId) { res.status(400).json({ error: 'Owners cannot leave their own project' }); return; }
+    logger.info({ userId, projectId }, '[audit] leave_project');
+    const myCollab = proj.collaborators.find(c => c.userId === userId);
+    proj.collaborators = proj.collaborators.filter(c => c.userId !== userId);
+    if (myCollab) {
+      proj.tasks.forEach(t => {
+        if (t.assignee === myCollab.id) t.assignee = '';
+        if (Array.isArray(t.assignees)) t.assignees = t.assignees.filter(a => a !== myCollab.id);
+      });
+    }
+    await proj.save();
+    if (livekitEnabled) {
+      const activeCall = await ActiveCall.findOne({ callId: projectId }).lean();
+      if (activeCall) await removeParticipant(activeCall.roomName, userId);
+    }
+    const me = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
+    const leftNotif = await Notification.create({
+      id: 'notif_' + uid(), toUserId: proj.ownerId, fromUserId: userId,
+      fromUsername: me?.username || '', fromName: me?.name || 'Someone', fromAvatarUrl: me?.avatarUrl || '',
+      type: 'collab_left',
+      meta: { entityId: proj.id, entityType: 'project', entityTitle: proj.title },
+      status: 'pending',
+    });
+    deliverNotifications(req, leftNotif);
+    emitProjectUpdate(req, projectId);
+    res.json({ ok: true });
+    return;
+  }
+
   // ── update_collaborator_role ──
   if (action === 'update_collaborator_role') {
     const { projectId, collaboratorId, role } = req.body;
@@ -2129,6 +2167,36 @@ router.post('/', apiLimiter, async (req, res, next) => {
       const activeCall = await ActiveCall.findOne({ callId: spaceId }).lean();
       if (activeCall) await removeParticipant(activeCall.roomName, removedCollab.userId);
     }
+    res.json({ ok: true });
+    return;
+  }
+
+  // ── leave_space ──
+  // Self-service opt-out: a collaborator removes themself from a shared space.
+  // Direct project-level collaborations inside the space are left untouched —
+  // those are separate memberships the user can also leave individually.
+  if (action === 'leave_space') {
+    const { spaceId } = req.body;
+    if (!spaceId) { res.status(400).json({ error: 'Missing data' }); return; }
+    const space = await Space.findOne({ id: spaceId, 'collaborators.userId': userId });
+    if (!space) { res.status(404).json({ error: 'Space not found' }); return; }
+    if (space.ownerId === userId) { res.status(400).json({ error: 'Owners cannot leave their own space' }); return; }
+    logger.info({ userId, spaceId }, '[audit] leave_space');
+    space.collaborators = space.collaborators.filter(c => c.userId !== userId);
+    await space.save();
+    if (livekitEnabled) {
+      const activeCall = await ActiveCall.findOne({ callId: spaceId }).lean();
+      if (activeCall) await removeParticipant(activeCall.roomName, userId);
+    }
+    const me = await User.findOne({ id: userId }).select('name username avatarUrl -_id');
+    const leftNotif = await Notification.create({
+      id: 'notif_' + uid(), toUserId: space.ownerId, fromUserId: userId,
+      fromUsername: me?.username || '', fromName: me?.name || 'Someone', fromAvatarUrl: me?.avatarUrl || '',
+      type: 'collab_left',
+      meta: { entityId: space.id, entityType: 'space', entityTitle: space.title },
+      status: 'pending',
+    });
+    deliverNotifications(req, leftNotif);
     res.json({ ok: true });
     return;
   }

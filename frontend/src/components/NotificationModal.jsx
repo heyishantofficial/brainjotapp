@@ -26,10 +26,11 @@ function NotifRow({ notif, onRespond, onNavigate }) {
   const isAssigned = notif.type === 'task_assigned';
   const isInviteResponse = notif.type === 'invite_response';
   const isTaskComment = notif.type === 'task_comment';
+  const isCollabLeft = notif.type === 'collab_left';
   const isPending = notif.status === 'pending';
   const canNavigate = !!(notif.meta?.entityId && notif.meta?.entityType);
 
-  const icon = isInvite ? '👥' : isMention || isTaskComment ? '💬' : isAssigned ? '📋' : isInviteResponse ? (notif.meta?.accepted === false ? '❌' : '✅') : '🔔';
+  const icon = isInvite ? '👥' : isMention || isTaskComment ? '💬' : isAssigned ? '📋' : isInviteResponse ? (notif.meta?.accepted === false ? '❌' : '✅') : isCollabLeft ? '👋' : '🔔';
 
   let bodyText;
   if (isInvite) {
@@ -80,6 +81,13 @@ function NotifRow({ notif, onRespond, onNavigate }) {
         {notif.meta?.commentText && (
           <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', fontStyle: 'italic' }}>"{notif.meta.commentText}"</div>
         )}
+      </>
+    );
+  } else if (isCollabLeft) {
+    bodyText = (
+      <>
+        <span style={{ fontWeight: '800' }}>@{notif.fromUsername || notif.fromName}</span> left your {notif.meta?.entityType || 'project'}{' '}
+        <span style={{ fontWeight: '800' }}>{notif.meta?.entityTitle}</span>
       </>
     );
   } else {

@@ -905,6 +905,18 @@ export default function App() {
             onReorder={loadData}
             onAddProject={() => { setAddProjectSpaceId(currentSharedSpace.id); setShowAddProject(true); }}
             canAddProject={currentSharedSpace.myRole === 'editor'}
+            isSharedView={true}
+            sharedBy={currentSharedSpace.ownerInfo?.name || ''}
+            onLeaveSpace={async () => {
+              const r = await api('leave_space', { spaceId: currentSharedSpace.id });
+              if (r?.ok) {
+                setCurrentSharedSpaceId(null);
+                toast('You left the space');
+                loadData();
+              } else {
+                toast(r?.error || 'Could not leave space');
+              }
+            }}
             onOpenCollab={() => {}}
             onEditSpace={() => {}}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}
@@ -986,7 +998,7 @@ export default function App() {
                   commitBody: { projectId: currentSharedProject.id, taskId: task.id },
                 })}
                 isSharedView={true}
-                sharedBy={currentSharedProject.sharedBy}
+                sharedBy={currentSharedProject.sharedBy || currentSharedProject.ownerInfo?.name || ''}
                 currentUserRole={currentSharedProject.myRole || 'viewer'}
                 onBack={() => {
                   const spaceId = currentSharedProject?.spaceId;

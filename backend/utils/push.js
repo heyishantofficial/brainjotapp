@@ -43,6 +43,10 @@ function pushPayloadFor(n) {
       title = `${who} assigned you a task`;
       body = task || entity;
       break;
+    case 'collab_left':
+      title = `${who} left ${entity}`;
+      body = `They no longer have access to your ${n.meta?.entityType || 'project'}`;
+      break;
     default:
       title = 'BrainJot';
       body = `${who} sent you a notification`;
