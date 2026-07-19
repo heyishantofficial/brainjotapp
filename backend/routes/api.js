@@ -19,6 +19,9 @@ const Notification = require('../models/Notification');
 const Otp = require('../models/Otp');
 const Invite = require('../models/Invite');
 const LoginAttempt = require('../models/LoginAttempt');
+const RateLimitTrip = require('../models/RateLimitTrip');
+const { recordLogin } = require('../utils/loginEvents');
+const { touchActivity } = require('../utils/activity');
 const { OAuth2Client } = require('google-auth-library');
 const { UPLOADS_DIR, useR2, getPresignedPutUrl, deleteStoredFile, deleteUserFiles, filePublicUrl } = require('../utils/storage');
 const { livekitEnabled, ActiveCall, generateToken, removeParticipant, LIVEKIT_URL } = require('../utils/livekit');
@@ -440,6 +443,7 @@ const authLimiter = rateLimit({
   store: new MongoRateLimitStore(15 * 60 * 1000, 'rate_limits_auth'),
   handler: (req, res) => {
     logger.warn({ ip: req.ip, action: req.query.action }, '[rate_limit] auth limiter triggered');
+    RateLimitTrip.create({ name: 'auth', userId: req.session?.userId || null, ip: req.ip || '' }).catch(() => {});
     res.status(429).json({ error: 'Too many attempts, please try again later' });
   },
 });
@@ -453,6 +457,7 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   handler: (req, res) => {
     logger.warn({ ip: req.ip, userId: req.session?.userId, action: req.query.action }, '[rate_limit] api limiter triggered');
+    RateLimitTrip.create({ name: 'api', userId: req.session?.userId || null, ip: req.ip || '' }).catch(() => {});
     res.status(429).json({ error: 'Too many requests, please slow down' });
   },
 });
@@ -466,6 +471,7 @@ const exportLimiter = rateLimit({
   legacyHeaders: false,
   handler: (req, res) => {
     logger.warn({ ip: req.ip, userId: req.session?.userId }, '[rate_limit] export limiter triggered');
+    RateLimitTrip.create({ name: 'export', userId: req.session?.userId || null, ip: req.ip || '' }).catch(() => {});
     res.status(429).json({ error: 'Export limit reached, please try again later' });
   },
 });
@@ -475,6 +481,7 @@ function requireAuth(req, res, next) {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  touchActivity(req); // throttled weekly-activity + lastSeenAt recording
   next();
 }
 
@@ -816,6 +823,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         const user = await User.findOne({ email: cleanEmail });
         if (!user) {
           logger.warn({ ip: req.ip, reason: 'unknown_email' }, '[auth] login_failure');
+          recordLogin(req, { email: cleanEmail, ok: false, method: 'password' });
           // Still increment attempt counter on unknown email to prevent timing-based enumeration
           await LoginAttempt.findOneAndUpdate(
             { email: cleanEmail },
@@ -827,6 +835,7 @@ router.post('/', apiLimiter, async (req, res, next) => {
         const match = await bcrypt.compare(password, user.passwordHash);
         if (!match) {
           logger.warn({ ip: req.ip, userId: user.id, reason: 'wrong_password' }, '[auth] login_failure');
+          recordLogin(req, { user, email: cleanEmail, ok: false, method: 'password' });
           await LoginAttempt.findOneAndUpdate(
             { email: cleanEmail },
             { $inc: { count: 1 }, $set: { expiresAt: new Date(Date.now() + 60 * 60 * 1000) } },
@@ -846,6 +855,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
         await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
+        touchActivity(req);
+        recordLogin(req, { user, ok: true, method: 'password' });
         logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] login_success');
         res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {
@@ -942,7 +953,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
         await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
-        
+        touchActivity(req);
+        recordLogin(req, { user, ok: true, method: 'google' });
         logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] google_login_success');
         res.json({ ok: true, isNewUser, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {
@@ -1097,7 +1109,8 @@ router.post('/', apiLimiter, async (req, res, next) => {
         await new Promise((resolve, reject) => req.session.regenerate(e => e ? reject(e) : resolve()));
         req.session.userId = user.id;
         req.session.userRole = user.role || 'user';
-        
+        touchActivity(req);
+        recordLogin(req, { user, ok: true, method: 'otp' });
         logger.info({ userId: user.id, ip: req.ip, role: user.role }, '[auth] otp_login_success');
         res.json({ ok: true, verified: true, exists: true, user: { id: user.id, name: user.name, email: user.email, username: user.username || '', role: user.role || 'user', avatarUrl: user.avatarUrl || '' } });
       } catch (err) {

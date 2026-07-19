@@ -51,6 +51,21 @@ export function track(event, properties = {}) {
   posthog.capture(event, properties);
 }
 
+// task_completed plus the daily-ritual event: the FIRST completion of the day
+// is exactly what advances the dashboard streak, so it doubles as
+// "ritual_completed". localStorage guard = once per device per day.
+export function trackTaskCompleted(source) {
+  if (!enabled) return;
+  posthog.capture('task_completed', { source });
+  try {
+    const key = `bj_ritual_${new Date().toISOString().slice(0, 10)}`;
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, '1');
+      posthog.capture('ritual_completed');
+    }
+  } catch { /* storage unavailable — skip the ritual dedupe */ }
+}
+
 export function trackWebVital({ name, value, rating }) {
   if (!enabled) return;
   posthog.capture('web_vital', { metric: name, value: +value.toFixed(1), rating });

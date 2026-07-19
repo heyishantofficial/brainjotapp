@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'superadmin'], default: 'user' },
   avatarUrl: { type: String, default: '' },
   storageUsedBytes: { type: Number, default: 0 }, // running total of uploaded file bytes
+  lastSeenAt: { type: Date, default: null }, // refreshed by the throttled activity touch (utils/activity.js)
   createdAt: { type: Date, default: Date.now },
   consentGiven: { type: Boolean, default: false },
   consentAt: { type: Date },

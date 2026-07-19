@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io as socketIO } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion';
 import { API_ORIGIN, api, apiCommit, hasPendingMutations, onMutationsSettled } from './api';
-import { identifyUser, resetAnalytics, track } from './analytics';
+import { identifyUser, resetAnalytics, track, trackTaskCompleted } from './analytics';
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
 import DashboardView from './views/DashboardView';
@@ -344,6 +344,7 @@ export default function App() {
     patchProjectTasks(projectId, tasks => tasks.map(t => {
       if (t.id !== taskId) return t;
       const nowDone = !t.done;
+      if (nowDone) trackTaskCompleted('app');
       return { ...t, done: nowDone, finishedAt: nowDone ? new Date().toISOString() : null };
     }));
     api('task_toggle', { projectId, taskId })

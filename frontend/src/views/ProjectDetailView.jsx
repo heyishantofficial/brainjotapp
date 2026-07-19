@@ -3,7 +3,7 @@ import { Bell, Search, MessageSquarePlus, ChevronDown, LayoutList, SquareKanban,
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
 import { api, apiForm, apiUpload, apiUrl } from '../api';
-import { track } from '../analytics';
+import { track, trackTaskCompleted } from '../analytics';
 import { getContrastColor } from '../utils/colors';
 import TaskItem from '../components/TaskItem';
 import TaskBoard from '../components/TaskBoard';
@@ -385,6 +385,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
           ? { ...t, done: !isCurrentlyDone, finishedAt: !isCurrentlyDone ? new Date().toISOString() : null }
           : t
       ));
+      if (!isCurrentlyDone) trackTaskCompleted('project');
       api('task_toggle', { projectId: project.id, taskId }).catch(() => {}).finally(onUpdate);
     }
 

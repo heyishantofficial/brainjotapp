@@ -8,6 +8,12 @@ const Space = require('../models/Space');
 const Feedback = require('../models/Feedback');
 const requireAdmin = require('../middleware/requireAdmin');
 const { deleteUserFiles } = require('../utils/storage');
+const Invite = require('../models/Invite');
+const LoginEvent = require('../models/LoginEvent');
+const LoginAttempt = require('../models/LoginAttempt');
+const RateLimitTrip = require('../models/RateLimitTrip');
+const UserActivity = require('../models/UserActivity');
+const { mondayOf } = require('../utils/activity');
 
 async function auditLog(db, adminId, action, target, meta = {}) {
   try {
@@ -46,7 +52,10 @@ const unlockLimiter = rateLimit({
   keyGenerator: (req) => req.session?.userId || ipKeyGenerator(req),
   standardHeaders: true,
   legacyHeaders: false,
-  handler: (req, res) => res.status(429).json({ error: 'Too many attempts, please try again later' }),
+  handler: (req, res) => {
+    RateLimitTrip.create({ name: 'admin_unlock', userId: req.session?.userId || null, ip: req.ip || '' }).catch(() => {});
+    res.status(429).json({ error: 'Too many attempts, please try again later' });
+  },
 });
 
 router.get('/unlock-status', (req, res) => {
@@ -509,6 +518,200 @@ router.get('/sentry', async (req, res) => {
   } catch (err) {
     console.error('[admin/sentry]', err);
     res.status(500).json({ configured: true, issues: [], error: err.message });
+  }
+});
+
+// ── Growth: accounting, cohorts, activation funnel ──
+// All computed from DB truth. Weekly activity history comes from UserActivity,
+// which only started recording when this shipped — accounting and cohorts
+// become fully accurate after 2+ weeks of data (the funnel is exact already).
+const DAY = 24 * 60 * 60 * 1000;
+const WEEK = 7 * DAY;
+const wkey = (d) => mondayOf(d).toISOString().slice(0, 10);
+
+router.get('/growth', async (req, res) => {
+  try {
+    const thisMonday = mondayOf(new Date());
+    const lastMonday = new Date(thisMonday.getTime() - WEEK);
+    const thisKey = wkey(thisMonday);
+    const lastKey = wkey(lastMonday);
+
+    // Weekly growth accounting.
+    const [activeThis, activeLast, newThisWeek] = await Promise.all([
+      UserActivity.distinct('userId', { week: thisKey }),
+      UserActivity.distinct('userId', { week: lastKey }),
+      User.countDocuments({ createdAt: { $gte: thisMonday } }),
+    ]);
+    const lastSet = new Set(activeLast);
+    const thisSet = new Set(activeThis);
+    const retained = activeThis.filter((id) => lastSet.has(id)).length;
+    const churned = activeLast.filter((id) => !thisSet.has(id)).length;
+    // Active this week, not last week → either brand new or resurrected.
+    const candidates = activeThis.filter((id) => !lastSet.has(id));
+    const resurrected = candidates.length
+      ? await User.countDocuments({ id: { $in: candidates }, createdAt: { $lt: lastMonday } })
+      : 0;
+    const quickRatio = churned > 0 ? +(((newThisWeek + resurrected) / churned).toFixed(2)) : null;
+
+    // Cohort retention: last 8 signup weeks × weeks-since-signup activity %.
+    const cohortStart = new Date(thisMonday.getTime() - 7 * WEEK);
+    const cohortUsers = await User.find({ createdAt: { $gte: cohortStart } }).select('id createdAt -_id').lean();
+    const activity = cohortUsers.length
+      ? await UserActivity.find({ userId: { $in: cohortUsers.map((u) => u.id) } }).select('userId week -_id').lean()
+      : [];
+    const activeWeeksByUser = new Map();
+    for (const a of activity) {
+      if (!activeWeeksByUser.has(a.userId)) activeWeeksByUser.set(a.userId, new Set());
+      activeWeeksByUser.get(a.userId).add(a.week);
+    }
+    const cohorts = [];
+    for (let w = 7; w >= 0; w--) {
+      const start = new Date(thisMonday.getTime() - w * WEEK);
+      const members = cohortUsers.filter((u) => wkey(u.createdAt) === wkey(start));
+      const cells = [];
+      for (let offset = 0; offset <= w; offset++) {
+        const key = wkey(new Date(start.getTime() + offset * WEEK));
+        const active = members.filter((u) => activeWeeksByUser.get(u.id)?.has(key)).length;
+        cells.push(members.length ? Math.round((active / members.length) * 100) : null);
+      }
+      cohorts.push({ week: wkey(start), size: members.length, cells });
+    }
+
+    // Activation funnel over the same 8 weeks of signups.
+    const ids = cohortUsers.map((u) => u.id);
+    const signupAt = new Map(cohortUsers.map((u) => [u.id, new Date(u.createdAt).getTime()]));
+    const [projectOwners, taskRows, inviters] = ids.length ? await Promise.all([
+      Project.distinct('ownerId', { ownerId: { $in: ids } }),
+      Project.aggregate([
+        { $match: { ownerId: { $in: ids } } },
+        { $unwind: '$tasks' },
+        { $project: { _id: 0, ownerId: 1, finishedAt: '$tasks.finishedAt' } },
+      ]),
+      Invite.distinct('invitedBy', { invitedBy: { $in: ids } }),
+    ]) : [[], [], []];
+    const hasTask = new Set(taskRows.map((r) => r.ownerId));
+    // Activation = 5+ tasks finished within 7 days of signup.
+    const finishedInWk1 = new Map();
+    for (const r of taskRows) {
+      if (!r.finishedAt) continue;
+      const t0 = signupAt.get(r.ownerId);
+      if (t0 != null && new Date(r.finishedAt).getTime() - t0 <= 7 * DAY) {
+        finishedInWk1.set(r.ownerId, (finishedInWk1.get(r.ownerId) || 0) + 1);
+      }
+    }
+    const activated = [...finishedInWk1.values()].filter((n) => n >= 5).length;
+    // Returned = active in the week after their signup week.
+    const returned = cohortUsers.filter((u) => {
+      const nextWeek = wkey(new Date(mondayOf(u.createdAt).getTime() + WEEK));
+      return activeWeeksByUser.get(u.id)?.has(nextWeek);
+    }).length;
+
+    res.json({
+      accounting: {
+        weekOf: thisKey,
+        activeThisWeek: activeThis.length,
+        activeLastWeek: activeLast.length,
+        new: newThisWeek,
+        retained,
+        resurrected,
+        churned,
+        quickRatio,
+      },
+      cohorts,
+      funnel: {
+        windowWeeks: 8,
+        signedUp: ids.length,
+        createdProject: projectOwners.length,
+        createdTask: hasTask.size,
+        sentInvite: inviters.length,
+        activated,          // 5+ tasks completed within week 1
+        returnedWeek2: returned,
+      },
+    });
+  } catch (err) {
+    console.error('[admin/growth]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Audit log viewer ──
+router.get('/audit', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const page = Math.max(0, parseInt(req.query.page, 10) || 0);
+    const filter = {};
+    if (req.query.action) filter.action = String(req.query.action);
+    if (req.query.adminId) filter.adminId = String(req.query.adminId);
+    const [items, total, actions] = await Promise.all([
+      db.collection('audit_log').find(filter).sort({ timestamp: -1 }).skip(page * 50).limit(50).toArray(),
+      db.collection('audit_log').countDocuments(filter),
+      db.collection('audit_log').distinct('action'),
+    ]);
+    // Resolve admin ids to names for readability.
+    const adminIds = [...new Set(items.map((i) => i.adminId).filter(Boolean))];
+    const admins = adminIds.length ? await User.find({ id: { $in: adminIds } }).select('id name -_id').lean() : [];
+    const nameById = Object.fromEntries(admins.map((a) => [a.id, a.name]));
+    res.json({
+      items: items.map((i) => ({
+        action: i.action,
+        adminId: i.adminId,
+        adminName: nameById[i.adminId] || i.adminId,
+        target: i.target,
+        meta: i.meta || {},
+        timestamp: i.timestamp,
+      })),
+      total,
+      actions: actions.sort(),
+    });
+  } catch (err) {
+    console.error('[admin/audit]', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── Security: login history, lockouts, rate-limit trips ──
+router.get('/security', async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 14 * DAY);
+    const daily = (rows) => {
+      const byDay = Object.fromEntries(rows.map((r) => [r._id, r.n]));
+      return Array.from({ length: 14 }, (_, i) => {
+        const day = new Date(since.getTime() + (i + 1) * DAY).toISOString().slice(0, 10);
+        return { date: day, count: byDay[day] || 0 };
+      });
+    };
+    const dayAgg = (match, dateField) => [
+      { $match: match },
+      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: `$${dateField}` } }, n: { $sum: 1 } } },
+    ];
+
+    const [okRows, failRows, tripRows, recentFailures, lockedOut, unlockFails7d, newDeviceLogins] = await Promise.all([
+      LoginEvent.aggregate(dayAgg({ ok: true, at: { $gte: since } }, 'at')),
+      LoginEvent.aggregate(dayAgg({ ok: false, at: { $gte: since } }, 'at')),
+      RateLimitTrip.aggregate([
+        { $match: { at: { $gte: since } } },
+        { $group: { _id: '$name', n: { $sum: 1 } } },
+      ]),
+      LoginEvent.find({ ok: false }).sort({ at: -1 }).limit(20).select('email method ip at -_id').lean(),
+      LoginAttempt.countDocuments({ count: { $gte: 10 } }),
+      mongoose.connection.db.collection('audit_log')
+        .countDocuments({ action: 'admin_unlock_failed', timestamp: { $gte: new Date(Date.now() - 7 * DAY) } }),
+      mongoose.connection.db.collection('audit_log')
+        .find({ action: 'admin_new_device_login' }).sort({ timestamp: -1 }).limit(10).toArray(),
+    ]);
+
+    res.json({
+      loginsOk: daily(okRows),
+      loginsFailed: daily(failRows),
+      trips: tripRows.map((t) => ({ label: t._id, value: t.n })).sort((a, b) => b.value - a.value),
+      recentFailures,
+      lockedOutEmails: lockedOut,
+      adminUnlockFailures7d: unlockFails7d,
+      newDeviceLogins: newDeviceLogins.map((e) => ({ adminId: e.adminId, meta: e.meta, timestamp: e.timestamp })),
+    });
+  } catch (err) {
+    console.error('[admin/security]', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -858,6 +858,9 @@ const TABS = [
   { key: 'Overview',  icon: '📊' },
   { key: 'Users',     icon: '👥' },
   { key: 'Sessions',  icon: '🟢' },
+  { key: 'Growth',    icon: '📈' },
+  { key: 'Audit',     icon: '📜' },
+  { key: 'Security',  icon: '🛡️' },
   { key: 'Feedback',  icon: '💬' },
   { key: 'System',    icon: '⚙️' },
   { key: 'Errors',    icon: '🚨' },
@@ -903,6 +906,9 @@ function AdminDashboard({ currentUser, onLogout }) {
         {tab === 'Overview' && <OverviewTab />}
         {tab === 'Users'    && <UsersTab currentUserId={currentUser?.id} onConfirm={openConfirm} />}
         {tab === 'Sessions' && <SessionsTab onConfirm={openConfirm} />}
+        {tab === 'Growth'   && <GrowthTab />}
+        {tab === 'Audit'    && <AuditTab />}
+        {tab === 'Security' && <SecurityTab />}
         {tab === 'Feedback' && <FeedbackTab onConfirm={openConfirm} />}
         {tab === 'System'   && <SystemTab />}
         {tab === 'Errors'   && <ErrorsTab />}
@@ -915,6 +921,202 @@ function AdminDashboard({ currentUser, onLogout }) {
           onConfirm={confirm.onConfirm}
           onClose={() => setConfirm(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// ── Growth tab ────────────────────────────────────────────────────────────────
+
+const tileStyle = { background: T.card, border: `1px solid ${T.border2}`, borderRadius: '14px', padding: '14px 16px', minWidth: '130px', flex: 1 };
+const tileLabel = { fontSize: '11px', color: T.sub, marginBottom: '4px', fontWeight: '700', letterSpacing: '0.04em', textTransform: 'uppercase' };
+const tileValue = { fontSize: '24px', fontWeight: '900' };
+const sectionTitle = { fontSize: '13px', fontWeight: '800', color: T.sub, margin: '26px 0 10px', letterSpacing: '0.04em', textTransform: 'uppercase' };
+
+function GrowthTab() {
+  const [data, setData] = useState(null);
+  useEffect(() => { adminFetch('/growth').then(setData).catch(() => setData({ error: true })); }, []);
+  if (!data) return <div style={{ color: T.muted }}>Loading…</div>;
+  if (data.error) return <div style={{ color: T.red }}>Couldn't load growth data.</div>;
+
+  const a = data.accounting;
+  const funnel = [
+    { label: 'Signed up (8 wks)', value: data.funnel.signedUp },
+    { label: 'Created a project', value: data.funnel.createdProject },
+    { label: 'Created a task', value: data.funnel.createdTask },
+    { label: 'Sent an invite link', value: data.funnel.sentInvite },
+    { label: 'Activated (5 tasks in wk 1)', value: data.funnel.activated },
+    { label: 'Returned in week 2', value: data.funnel.returnedWeek2 },
+  ];
+
+  return (
+    <div>
+      <div style={sectionTitle}>This week (started {a.weekOf})</div>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={tileStyle}><div style={tileLabel}>Active this week</div><div style={tileValue}>{a.activeThisWeek}</div><div style={{ fontSize: '11px', color: T.muted }}>{a.activeLastWeek} last week</div></div>
+        <div style={tileStyle}><div style={tileLabel}>New</div><div style={{ ...tileValue, color: T.green }}>{a.new}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Retained</div><div style={tileValue}>{a.retained}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Resurrected</div><div style={{ ...tileValue, color: T.blue }}>{a.resurrected}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Churned</div><div style={{ ...tileValue, color: T.red }}>{a.churned}</div></div>
+        <div style={tileStyle}>
+          <div style={tileLabel}>Quick ratio</div>
+          <div style={{ ...tileValue, color: a.quickRatio == null ? T.muted : a.quickRatio >= 1 ? T.green : T.red }}>{a.quickRatio == null ? '—' : a.quickRatio}</div>
+          <div style={{ fontSize: '11px', color: T.muted }}>(new+resurrected) / churned</div>
+        </div>
+      </div>
+      <div style={{ fontSize: '11px', color: T.muted, marginTop: '8px' }}>
+        Weekly activity recording started with this release — retained/resurrected/churned become fully accurate after two weeks of data.
+      </div>
+
+      <div style={sectionTitle}>Cohort retention (weekly signups × weeks since signup, % active)</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'separate', borderSpacing: '3px', fontSize: '11px' }}>
+          <thead>
+            <tr>
+              <th style={{ color: T.muted, textAlign: 'left', padding: '2px 8px' }}>Cohort</th>
+              <th style={{ color: T.muted, padding: '2px 6px' }}>Size</th>
+              {Array.from({ length: 8 }, (_, i) => <th key={i} style={{ color: T.muted, padding: '2px 6px' }}>W{i}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {data.cohorts.map((c) => (
+              <tr key={c.week}>
+                <td style={{ color: T.sub, padding: '2px 8px', whiteSpace: 'nowrap' }}>{c.week}</td>
+                <td style={{ color: T.text, textAlign: 'center', fontWeight: '700' }}>{c.size}</td>
+                {Array.from({ length: 8 }, (_, i) => {
+                  const v = c.cells[i];
+                  const filled = v != null && c.size > 0;
+                  return (
+                    <td key={i} title={filled ? `${v}% active` : ''} style={{
+                      width: '44px', height: '26px', textAlign: 'center', borderRadius: '6px',
+                      background: filled ? `rgba(124,58,237,${0.12 + (v / 100) * 0.75})` : 'transparent',
+                      border: `1px solid ${filled ? 'transparent' : T.border}`,
+                      color: filled && v >= 50 ? '#fff' : T.sub,
+                      fontWeight: '700',
+                    }}>{filled ? `${v}%` : ''}</td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={sectionTitle}>Activation funnel — signups from the last 8 weeks</div>
+      <div style={{ ...tileStyle, maxWidth: '520px' }}>
+        <HBarChart data={funnel} color={T.accent} />
+      </div>
+    </div>
+  );
+}
+
+// ── Audit tab ─────────────────────────────────────────────────────────────────
+
+function AuditTab() {
+  const [data, setData] = useState(null);
+  const [action, setAction] = useState('');
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    const qs = new URLSearchParams({ page: String(page), ...(action ? { action } : {}) });
+    adminFetch(`/audit?${qs}`).then(setData).catch(() => setData({ error: true }));
+  }, [action, page]);
+
+  if (!data) return <div style={{ color: T.muted }}>Loading…</div>;
+  if (data.error) return <div style={{ color: T.red }}>Couldn't load the audit log.</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '14px' }}>
+        <select value={action} onChange={(e) => { setAction(e.target.value); setPage(0); }}
+          style={{ background: T.card, color: T.text, border: `1px solid ${T.border2}`, borderRadius: '8px', padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit' }}>
+          <option value="">All actions</option>
+          {(data.actions || []).map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <span style={{ fontSize: '12px', color: T.muted }}>{data.total} entries</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {data.items.map((i, idx) => (
+          <div key={idx} style={{ display: 'flex', gap: '12px', alignItems: 'baseline', background: T.card, border: `1px solid ${T.border}`, borderRadius: '10px', padding: '9px 12px', fontSize: '12.5px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '800', color: i.action.includes('fail') || i.action.includes('ban') || i.action.includes('delete') ? T.red : T.text }}>{i.action.replace(/_/g, ' ')}</span>
+            <span style={{ color: T.sub }}>by {i.adminName}</span>
+            {i.target && <span style={{ color: T.muted }}>→ {String(i.target)}</span>}
+            {i.meta && Object.keys(i.meta).length > 0 && <span style={{ color: T.muted, fontSize: '11px' }}>{JSON.stringify(i.meta)}</span>}
+            <span style={{ marginLeft: 'auto', color: T.muted }}>{timeAgo(i.timestamp)}</span>
+          </div>
+        ))}
+        {data.items.length === 0 && <div style={{ color: T.muted, padding: '20px', textAlign: 'center' }}>No entries.</div>}
+      </div>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        {page > 0 && <button onClick={() => setPage(page - 1)} style={{ ...BTN, border: `1px solid ${T.border2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '12px' }}>← Newer</button>}
+        {(page + 1) * 50 < data.total && <button onClick={() => setPage(page + 1)} style={{ ...BTN, border: `1px solid ${T.border2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '12px' }}>Older →</button>}
+      </div>
+    </div>
+  );
+}
+
+// ── Security tab ──────────────────────────────────────────────────────────────
+
+function SecurityTab() {
+  const [data, setData] = useState(null);
+  useEffect(() => { adminFetch('/security').then(setData).catch(() => setData({ error: true })); }, []);
+  if (!data) return <div style={{ color: T.muted }}>Loading…</div>;
+  if (data.error) return <div style={{ color: T.red }}>Couldn't load security data.</div>;
+
+  const failTotal = (data.loginsFailed || []).reduce((s, d) => s + d.count, 0);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={tileStyle}><div style={tileLabel}>Failed logins · 14d</div><div style={{ ...tileValue, color: failTotal > 0 ? T.amber : T.text }}>{failTotal}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Locked-out emails now</div><div style={{ ...tileValue, color: data.lockedOutEmails > 0 ? T.red : T.text }}>{data.lockedOutEmails}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Admin unlock failures · 7d</div><div style={{ ...tileValue, color: data.adminUnlockFailures7d > 0 ? T.red : T.text }}>{data.adminUnlockFailures7d}</div></div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px', marginTop: '16px' }}>
+        <div style={tileStyle}>
+          <div style={{ ...tileLabel, marginBottom: '8px' }}>Successful logins · 14d</div>
+          <AreaChart data={data.loginsOk} color={T.green} />
+        </div>
+        <div style={tileStyle}>
+          <div style={{ ...tileLabel, marginBottom: '8px' }}>Failed logins · 14d</div>
+          <AreaChart data={data.loginsFailed} color={T.red} />
+        </div>
+      </div>
+
+      {data.trips?.length > 0 && (
+        <>
+          <div style={sectionTitle}>Rate-limit trips · 14d</div>
+          <div style={{ ...tileStyle, maxWidth: '420px' }}><HBarChart data={data.trips} color={T.amber} /></div>
+        </>
+      )}
+
+      <div style={sectionTitle}>Recent failed logins</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+        {data.recentFailures.map((f, i) => (
+          <div key={i} style={{ display: 'flex', gap: '12px', background: T.card, border: `1px solid ${T.border}`, borderRadius: '10px', padding: '8px 12px', fontSize: '12.5px', flexWrap: 'wrap' }}>
+            <span style={{ color: T.text, fontWeight: '700' }}>{f.email || '(unknown)'}</span>
+            <span style={{ color: T.muted }}>{f.method}</span>
+            <span style={{ color: T.muted }}>{f.ip}</span>
+            <span style={{ marginLeft: 'auto', color: T.muted }}>{timeAgo(f.at)}</span>
+          </div>
+        ))}
+        {data.recentFailures.length === 0 && <div style={{ color: T.muted, padding: '14px' }}>None in the last 90 days. 🎉</div>}
+      </div>
+
+      {data.newDeviceLogins?.length > 0 && (
+        <>
+          <div style={sectionTitle}>Superadmin new-device sign-ins</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            {data.newDeviceLogins.map((e, i) => (
+              <div key={i} style={{ display: 'flex', gap: '12px', background: T.card, border: `1px solid ${T.amber}44`, borderRadius: '10px', padding: '8px 12px', fontSize: '12.5px' }}>
+                <span style={{ color: T.amber, fontWeight: '700' }}>⚠️ new device</span>
+                <span style={{ color: T.sub }}>{e.meta?.method} · {e.meta?.ip}</span>
+                <span style={{ marginLeft: 'auto', color: T.muted }}>{timeAgo(e.timestamp)}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

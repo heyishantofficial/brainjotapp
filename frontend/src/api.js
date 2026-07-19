@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { track } from './analytics';
 
 const rawApiUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || '').trim();
 
@@ -52,6 +53,16 @@ function endMutation() {
   }
 }
 
+// Taxonomy events fired centrally on successful calls, so no call site can
+// forget them. Each entry returns [event, props] or null to skip.
+const ACTION_EVENTS = {
+  send_collab_invite: () => ['invite_sent', { method: 'direct' }],
+  generate_invite_link: () => ['invite_sent', { method: 'link' }],
+  join_via_link: () => ['invite_accepted', { method: 'link' }],
+  respond_collab_invite: (body) => (body?.accept ? ['invite_accepted', { method: 'direct' }] : null),
+  subscribe_push: () => ['push_enabled', {}],
+};
+
 export async function api(action, body = null, method = 'POST', extraQuery = '') {
   const isMutation = method !== 'GET';
   if (isMutation) beginMutation();
@@ -68,6 +79,8 @@ export async function api(action, body = null, method = 'POST', extraQuery = '')
       console.log(`[API CALL] ${method} ${action}`, safeBody);
     }
     const res = await apiInstance(config);
+    const ev = ACTION_EVENTS[action]?.(body); // 2xx only — errors threw above
+    if (ev) track(ev[0], ev[1]);
     return res.data;
   } catch (error) {
     if (error.response?.data) return error.response.data;
