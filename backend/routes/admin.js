@@ -1,5 +1,7 @@
 const express = require('express');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const User = require('../models/User');
 const Project = require('../models/Project');
 const Space = require('../models/Space');
@@ -17,6 +19,62 @@ async function auditLog(db, adminId, action, target, meta = {}) {
 
 const router = express.Router();
 router.use(requireAdmin);
+
+// ── Sudo unlock ───────────────────────────────────────────────────
+// The dashboard needs a second password (ADMIN_DASH_PASSWORD) on top of the
+// superadmin session, so a stolen brainjot login alone can't reach it. The
+// unlock lasts 30 minutes per session; everything below the gate 401s with
+// code ADMIN_LOCKED until then. Fail-closed when the env var is unset.
+const ADMIN_UNLOCK_TTL = 30 * 60 * 1000;
+
+function adminUnlocked(req) {
+  const at = req.session?.adminUnlockedAt;
+  return typeof at === 'number' && Date.now() - at < ADMIN_UNLOCK_TTL;
+}
+
+// Hash both sides so timingSafeEqual gets equal-length buffers.
+function passwordMatches(input) {
+  const a = crypto.createHash('sha256').update(String(input || '')).digest();
+  const b = crypto.createHash('sha256').update(String(process.env.ADMIN_DASH_PASSWORD)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+// A password oracle gets a much tighter budget than the general apiLimiter.
+const unlockLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.session?.userId || ipKeyGenerator(req),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ error: 'Too many attempts, please try again later' }),
+});
+
+router.get('/unlock-status', (req, res) => {
+  res.json({ configured: !!process.env.ADMIN_DASH_PASSWORD, unlocked: adminUnlocked(req) });
+});
+
+router.post('/unlock', unlockLimiter, async (req, res) => {
+  if (!process.env.ADMIN_DASH_PASSWORD) {
+    return res.status(503).json({ error: 'Admin password not configured on the server', code: 'ADMIN_PASSWORD_UNSET' });
+  }
+  const ok = passwordMatches(req.body?.password);
+  // Both outcomes are audited — a run of failures IS the signal that someone
+  // is sitting on a hijacked superadmin session.
+  await auditLog(mongoose.connection.db, req.session.userId, ok ? 'admin_unlock' : 'admin_unlock_failed', req.session.userId);
+  if (!ok) return res.status(401).json({ error: 'Wrong password' });
+  req.session.adminUnlockedAt = Date.now();
+  res.json({ ok: true });
+});
+
+router.use((req, res, next) => {
+  if (!process.env.ADMIN_DASH_PASSWORD) {
+    return res.status(503).json({ error: 'Admin password not configured on the server', code: 'ADMIN_PASSWORD_UNSET' });
+  }
+  if (!adminUnlocked(req)) {
+    return res.status(401).json({ error: 'Admin unlock required', code: 'ADMIN_LOCKED' });
+  }
+  next();
+});
 
 // ── Overview stats ──
 router.get('/stats', async (req, res) => {

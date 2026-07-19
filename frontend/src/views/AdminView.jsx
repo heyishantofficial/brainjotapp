@@ -863,7 +863,7 @@ const TABS = [
   { key: 'Errors',    icon: '🚨' },
 ];
 
-export default function AdminView({ currentUser, onLogout }) {
+function AdminDashboard({ currentUser, onLogout }) {
   const [tab,     setTab]     = useState('Overview');
   const [confirm, setConfirm] = useState(null);
 
@@ -918,4 +918,85 @@ export default function AdminView({ currentUser, onLogout }) {
       )}
     </div>
   );
+}
+
+// ── Sudo lock screen ──────────────────────────────────────────────────────────
+// The dashboard needs ADMIN_DASH_PASSWORD on top of the superadmin session, so
+// a hijacked brainjot login alone can't reach it. Unlock lasts 30 min/session.
+
+function AdminLock({ configured, onUnlocked }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!password || busy) return;
+    setBusy(true); setError('');
+    try {
+      const res = await fetch(apiUrl('/api/admin/unlock'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) onUnlocked();
+      else { setError(data.error || 'Unlock failed'); setPassword(''); }
+    } catch {
+      setError('Network error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ background: T.bg, minHeight: '100vh', color: T.text, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+      <div style={{ background: T.card, border: `1px solid ${T.border2}`, borderRadius: '16px', padding: '34px 30px', width: '100%', maxWidth: '360px', textAlign: 'center' }}>
+        <div style={{ fontSize: '28px', marginBottom: '10px' }}>🔒</div>
+        <div style={{ fontSize: '17px', fontWeight: '900', marginBottom: '6px' }}>Admin is locked</div>
+        {configured ? (
+          <>
+            <div style={{ fontSize: '13px', color: T.sub, marginBottom: '18px' }}>
+              Enter the admin password to continue. Unlocks this session for 30 minutes.
+            </div>
+            <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <input
+                type="password" placeholder="Admin password" autoFocus value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ background: T.surface, border: `1px solid ${T.border2}`, borderRadius: '10px', padding: '10px 12px', color: T.text, fontSize: '14px', fontFamily: 'inherit', outline: 'none' }}
+              />
+              <button type="submit" disabled={!password || busy}
+                style={{ ...BTN, background: T.accent, color: '#fff', fontWeight: '800', fontSize: '14px', padding: '10px', borderRadius: '10px', opacity: !password || busy ? 0.5 : 1 }}>
+                {busy ? 'Checking…' : 'Unlock'}
+              </button>
+            </form>
+            {error && <div style={{ color: T.red, fontSize: '13px', marginTop: '12px' }}>{error}</div>}
+          </>
+        ) : (
+          <div style={{ fontSize: '13px', color: T.sub }}>
+            ADMIN_DASH_PASSWORD is not set on the server. Add it to the backend environment
+            (Dokploy) and restart — until then the dashboard stays locked for everyone.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function AdminView({ currentUser, onLogout }) {
+  // null = checking, else { configured, unlocked }
+  const [lock, setLock] = useState(null);
+
+  useEffect(() => {
+    adminFetch('/unlock-status')
+      .then((data) => setLock({ configured: data.configured !== false, unlocked: !!data.unlocked }))
+      .catch(() => setLock({ configured: true, unlocked: false }));
+  }, []);
+
+  if (!lock) return <div style={{ background: T.bg, minHeight: '100vh' }} />;
+  if (!lock.unlocked) {
+    return <AdminLock configured={lock.configured} onUnlocked={() => setLock({ configured: true, unlocked: true })} />;
+  }
+  return <AdminDashboard currentUser={currentUser} onLogout={onLogout} />;
 }
