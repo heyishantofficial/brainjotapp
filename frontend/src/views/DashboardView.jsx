@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bell, Search, MessageSquarePlus, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion'; // eslint-disable-line no-unused-vars
 import { api } from '../api';
@@ -6,7 +6,7 @@ import ProjectCard, { CountUp } from '../components/ProjectCard';
 import { getContrastColor } from '../utils/colors';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 
-function SpaceCard({ space, projects, onOpenSpace, sharedBy }) {
+function SpaceCard({ space, projects, onOpenSpace, sharedBy, onContextMenu }) {
   const spaceProjects = projects.filter(p => p.spaceId === space.id && !p.archived);
   const totalTasks = spaceProjects.reduce((s, p) => s + (p.tasks || []).length, 0);
   const doneTasks  = spaceProjects.reduce((s, p) => s + (p.tasks || []).filter(t => t.done).length, 0);
@@ -17,6 +17,7 @@ function SpaceCard({ space, projects, onOpenSpace, sharedBy }) {
     <div
       className="proj-card"
       onClick={() => onOpenSpace(space.id)}
+      onContextMenu={onContextMenu}
       style={{
         background: space.color,
         color: contrast,
@@ -125,14 +126,24 @@ export default function DashboardView({
   onOpenNotifications,
   onOpenFeedback,
   unreadNotifications = 0,
+  onLeaveShared,
 }) {
   // Tasks checked off moments ago stay on their focus card briefly so the
   // checkbox animation can play before the card leaves the rail.
   const [recentlyDone, setRecentlyDone] = useState(() => new Set());
+  // Right-click menu on "Shared with you" cards — kind: 'project' | 'space'
+  const [sharedCtxMenu, setSharedCtxMenu] = useState({ open: false, x: 0, y: 0, kind: '', item: null });
   // Smooth add/remove/restore animation for the card grids
   const [spacesGridRef] = useAutoAnimate();
   const [sharedSpacesGridRef] = useAutoAnimate();
   const [sharedProjectsGridRef] = useAutoAnimate();
+
+  useEffect(() => {
+    if (!sharedCtxMenu.open) return;
+    const close = () => setSharedCtxMenu(p => ({ ...p, open: false }));
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [sharedCtxMenu.open]);
 
   let doneCount  = 0;
   let totalCount = 0;
@@ -467,7 +478,14 @@ export default function DashboardView({
                 <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '16px' }}>Spaces</div>
                 <div ref={sharedSpacesGridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
                   {sharedSpaces.map(s => (
-                    <SpaceCard key={s.id} space={s} projects={s.projects || []} onOpenSpace={() => onOpenSharedSpace(s.id)} sharedBy={s.ownerInfo?.name} />
+                    <SpaceCard
+                      key={s.id}
+                      space={s}
+                      projects={s.projects || []}
+                      onOpenSpace={() => onOpenSharedSpace(s.id)}
+                      sharedBy={s.ownerInfo?.name}
+                      onContextMenu={e => { e.preventDefault(); setSharedCtxMenu({ open: true, x: e.clientX, y: e.clientY, kind: 'space', item: s }); }}
+                    />
                   ))}
                 </div>
               </div>
@@ -478,7 +496,12 @@ export default function DashboardView({
                 <div style={{ fontSize: '11px', fontWeight: '800', color: 'var(--muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '16px' }}>Projects</div>
                 <div className="projects-grid" ref={sharedProjectsGridRef}>
                   {sharedProjects.map(p => (
-                    <div key={p.id} onDrop={e => handleDropGlobal(e, p.id)} onDragOver={e => e.preventDefault()}>
+                    <div
+                      key={p.id}
+                      onDrop={e => handleDropGlobal(e, p.id)}
+                      onDragOver={e => e.preventDefault()}
+                      onContextMenu={e => { e.preventDefault(); setSharedCtxMenu({ open: true, x: e.clientX, y: e.clientY, kind: 'project', item: p }); }}
+                    >
                       <ProjectCard p={p} onOpenProject={onOpenSharedProject} onReorder={onReorder} projectProgress={projectProgress} />
                     </div>
                   ))}
@@ -490,6 +513,31 @@ export default function DashboardView({
       </div>
 
       </div>
+      )}
+
+      {/* Shared item context menu — right-click on a "Shared with you" card */}
+      {sharedCtxMenu.open && sharedCtxMenu.item && (
+        <div className="context-menu open" style={{ position: 'fixed', left: sharedCtxMenu.x, top: sharedCtxMenu.y, zIndex: 9999 }} onClick={e => e.stopPropagation()}>
+          <div style={{ padding: '6px 12px 4px', fontSize: '10px', fontWeight: '800', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+            Shared by {sharedCtxMenu.item.ownerInfo?.name || 'someone'}
+          </div>
+          <button
+            className="context-menu-btn"
+            onClick={() => {
+              const { kind, item } = sharedCtxMenu;
+              setSharedCtxMenu(p => ({ ...p, open: false }));
+              kind === 'space' ? onOpenSharedSpace(item.id) : onOpenSharedProject(item.id);
+            }}
+          >↗ Open {sharedCtxMenu.kind}</button>
+          <button
+            className="context-menu-btn danger"
+            onClick={() => {
+              const { kind, item } = sharedCtxMenu;
+              setSharedCtxMenu(p => ({ ...p, open: false }));
+              onLeaveShared?.(kind, item);
+            }}
+          >🚪 Leave {sharedCtxMenu.kind}</button>
+        </div>
       )}
 
     </div>

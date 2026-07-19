@@ -24,6 +24,7 @@ import { enablePush, syncPushIfGranted, disablePushForLogout } from './utils/pus
 import CallRoom from './components/CallRoom';
 import GlobalCallNotification from './components/GlobalCallNotification';
 import CallBanner from './components/CallBanner';
+import DialogModal from './components/DialogModal';
 import FadeOut from './components/FadeOut';
 
 // Lazy-loaded: heavy or rarely-used chunks loaded on demand
@@ -195,6 +196,9 @@ export default function App() {
   const [showSpaceCollab, setShowSpaceCollab] = useState({ open: false, spaceId: '' });
   const [showNotifications, setShowNotifications] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  // Leave-shared confirm: { kind: 'project'|'space', item } — opened from the
+  // right-click context menus on shared items (Sidebar + Dashboard)
+  const [leaveConfirm, setLeaveConfirm] = useState({ open: false, kind: '', item: null });
   const [showProfile, setShowProfile] = useState(false);
   const [inviteToken, setInviteToken] = useState(null);
   const [googleClientId, setGoogleClientId] = useState(configuredGoogleClientId);
@@ -784,6 +788,24 @@ export default function App() {
   const currentSpace = appData.spaces?.find(s => s.id === currentSpaceId);
   const activeView = currentSharedProject ? 'shared' : currentSharedSpace ? 'shared-space' : currentProjectId ? 'project' : currentSpaceId && currentSpace ? 'space' : 'dashboard';
 
+  const requestLeaveShared = (kind, item) => setLeaveConfirm({ open: true, kind, item });
+  const performLeaveShared = async () => {
+    const { kind, item } = leaveConfirm;
+    setLeaveConfirm({ open: false, kind: '', item: null });
+    if (!item) return;
+    const r = kind === 'space'
+      ? await api('leave_space', { spaceId: item.id })
+      : await api('leave_project', { projectId: item.id });
+    if (r?.ok) {
+      if (kind === 'space' && currentSharedSpaceId === item.id) setCurrentSharedSpaceId(null);
+      if (kind === 'project' && currentSharedProjectId === item.id) setCurrentSharedProjectId(null);
+      toast(`You left "${item.title}"`);
+      loadData();
+    } else {
+      toast(r?.error || `Could not leave ${kind}`);
+    }
+  };
+
   return (
     <div id="app" style={{ display: 'block' }}>
       <button className={`hamburger ${sidebarOpen ? 'hidden' : ''}`} onClick={() => setSidebarOpen(!sidebarOpen)} aria-label="Open navigation menu" aria-expanded={sidebarOpen}>
@@ -832,7 +854,17 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToast={toast}
         onScheduleDelete={scheduleDelete}
+        onLeaveShared={requestLeaveShared}
         isLoading={!dataLoaded}
+      />
+
+      <DialogModal
+        isOpen={leaveConfirm.open}
+        type="confirm"
+        title={leaveConfirm.kind === 'space' ? 'Leave space' : 'Leave project'}
+        message={`Leave "${leaveConfirm.item?.title}"? You will lose access${leaveConfirm.kind === 'space' ? ' to this space and its projects' : ''}. ${leaveConfirm.item?.ownerInfo?.name || 'The owner'} can re-invite you later.`}
+        onConfirm={performLeaveShared}
+        onCancel={() => setLeaveConfirm({ open: false, kind: '', item: null })}
       />
 
       <main className={`main ${sidebarCollapsed ? 'expanded' : ''}`}>
@@ -863,6 +895,7 @@ export default function App() {
             onOpenNotifications={() => setShowNotifications(true)}
             onOpenFeedback={() => setShowFeedback(true)}
             unreadNotifications={unreadCount}
+            onLeaveShared={requestLeaveShared}
           />
         )}
         {!showProfile && activeView === 'space' && currentSpace && (
@@ -907,16 +940,6 @@ export default function App() {
             canAddProject={currentSharedSpace.myRole === 'editor'}
             isSharedView={true}
             sharedBy={currentSharedSpace.ownerInfo?.name || ''}
-            onLeaveSpace={async () => {
-              const r = await api('leave_space', { spaceId: currentSharedSpace.id });
-              if (r?.ok) {
-                setCurrentSharedSpaceId(null);
-                toast('You left the space');
-                loadData();
-              } else {
-                toast(r?.error || 'Could not leave space');
-              }
-            }}
             onOpenCollab={() => {}}
             onEditSpace={() => {}}
             onOpenSearch={() => setIsCommandPaletteOpen(true)}

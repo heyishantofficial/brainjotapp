@@ -14,7 +14,6 @@ import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { CountUp } from '../components/ProjectCard';
 import ConfettiCelebration from '../components/ConfettiCelebration';
 import ProjectModal from '../components/ProjectModal';
-import DialogModal from '../components/DialogModal';
 import FadeOut from '../components/FadeOut';
 import DOMPurify from 'dompurify';
 
@@ -39,8 +38,6 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(`bj_view_${project.id}`) || 'list');
   const [showViewMenu, setShowViewMenu] = useState(false);
-  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [activityCollapsed, setActivityCollapsed] = useState(() => localStorage.getItem('bj_activity_collapsed') === '1');
   // Internal highlight target for "jump to list" from Board/Calendar
   const [focusTaskId, setFocusTaskId] = useState(null);
@@ -476,21 +473,6 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   const images = (project.files || []).filter(f => ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(f.type));
   const others = (project.files || []).filter(f => !['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(f.type));
 
-  const leaveProject = async () => {
-    if (leaving) return;
-    setLeaving(true);
-    const r = await api('leave_project', { projectId: project.id });
-    setLeaving(false);
-    setShowLeaveDialog(false);
-    if (r?.ok) {
-      onToast('You left this project');
-      onBack();
-      onUpdate();
-    } else {
-      onToast(r?.error || 'Could not leave project');
-    }
-  };
-
   return (
     <div className="view active" id="view-detail" style={{ paddingTop: '50px' }}>
       <button className="back-btn" onClick={onBack}>
@@ -543,38 +525,8 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             borderRadius: '20px',
             letterSpacing: '0.5px'
           }}>{currentUserRole === 'editor' ? 'EDITOR' : 'READ ONLY'}</span>
-          {/* Only direct collaborators can leave here — access granted via a
-              parent space is dropped by leaving the space instead. */}
-          {(project.collaborators || []).some(c => c.userId === currentUser?.id) && (
-            <button
-              onClick={() => setShowLeaveDialog(true)}
-              title="Leave this project — you will lose access"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(239,68,68,0.4)',
-                color: '#ef4444',
-                fontSize: '12px',
-                fontWeight: '700',
-                padding: '5px 12px',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Leave project
-            </button>
-          )}
         </div>
       )}
-
-      <DialogModal
-        isOpen={showLeaveDialog}
-        type="confirm"
-        title="Leave project"
-        message={`Leave "${project.title}"? You will lose access to its tasks, notes and files. ${sharedBy ? `${sharedBy} can re-invite you later.` : 'The owner can re-invite you later.'}`}
-        onConfirm={leaveProject}
-        onCancel={() => setShowLeaveDialog(false)}
-      />
 
       {/* Call banner — slides in when someone else starts a call in this project */}
       <AnimatePresence>

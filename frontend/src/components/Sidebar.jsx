@@ -64,6 +64,7 @@ export default function Sidebar({
   onOpenProfile,
   onToast,
   onScheduleDelete,
+  onLeaveShared,
 }) {
   const dragModifierRef = useRef(false);
   // Order chosen by an in-flight/finished motion drag; null = server order.
@@ -76,6 +77,8 @@ export default function Sidebar({
   const [expandedSpaces,  setExpandedSpaces]  = useState(new Set());
   const [contextMenu,     setContextMenu]     = useState({ open: false, x: 0, y: 0, project: null });
   const [spaceCtxMenu,    setSpaceCtxMenu]    = useState({ open: false, x: 0, y: 0, space: null });
+  // Context menu for items in "Shared with me" — kind: 'project' | 'space'
+  const [sharedCtxMenu,   setSharedCtxMenu]   = useState({ open: false, x: 0, y: 0, kind: '', item: null });
   const [showEditProject, setShowEditProject] = useState(false);
   const [showEditSpace,   setShowEditSpace]   = useState(null);
 
@@ -135,14 +138,15 @@ export default function Sidebar({
   }, [currentSharedSpaceId]);
 
   useEffect(() => {
-    if (!contextMenu.open && !spaceCtxMenu.open) return;
+    if (!contextMenu.open && !spaceCtxMenu.open && !sharedCtxMenu.open) return;
     const close = () => {
       setContextMenu(p => ({ ...p, open: false }));
       setSpaceCtxMenu(p => ({ ...p, open: false }));
+      setSharedCtxMenu(p => ({ ...p, open: false }));
     };
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
-  }, [contextMenu.open, spaceCtxMenu.open]);
+  }, [contextMenu.open, spaceCtxMenu.open, sharedCtxMenu.open]);
 
   const toggleSpace = (spaceId) => {
     setExpandedSpaces(prev => {
@@ -347,7 +351,7 @@ export default function Sidebar({
     <aside
       className={`sidebar ${sidebarOpen ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}
       id="sidebar"
-      onClick={() => { setContextMenu(p => ({ ...p, open: false })); setSpaceCtxMenu(p => ({ ...p, open: false })); }}
+      onClick={() => { setContextMenu(p => ({ ...p, open: false })); setSpaceCtxMenu(p => ({ ...p, open: false })); setSharedCtxMenu(p => ({ ...p, open: false })); }}
     >
       {/* Logo */}
       <div className="sb-logo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -551,11 +555,14 @@ export default function Sidebar({
                 const isSpaceActive = currentSharedSpaceId === s.id && !currentProjectId;
                 return (
                   <div key={s.id} style={{ marginBottom: '4px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px' }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', borderRadius: '12px', overflow: 'hidden', marginBottom: '2px' }}
+                      onContextMenu={e => { e.preventDefault(); setSharedCtxMenu({ open: true, x: e.clientX, y: e.clientY, kind: 'space', item: s }); }}
+                    >
                       <button
                         className={`nav-item ${isSpaceActive ? 'active' : ''}`}
                         onClick={() => handleSharedSpaceNameClick(s)}
-                        title={`Space shared by ${s.sharedBy}`}
+                        title={`Space shared by ${s.ownerInfo?.name || s.sharedBy || 'someone'}`}
                         style={{ flex: 1, justifyContent: 'flex-start', gap: '8px', borderRadius: '12px', paddingRight: '4px' }}
                       >
                         <span style={{ width: '8px', height: '8px', borderRadius: '3px', background: s.color, flexShrink: 0, display: 'inline-block' }}></span>
@@ -569,13 +576,23 @@ export default function Sidebar({
                         )}
                         <span style={{ fontSize: '11px', color: 'var(--muted)', flexShrink: 0 }}>{isExpanded ? '▾' : '▸'}</span>
                       </button>
-                      <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0, marginRight: '2px' }}>🗂</span>
+                      <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0 }}>🗂</span>
+                      <button
+                        onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setSharedCtxMenu({ open: true, x: r.right, y: r.bottom, kind: 'space', item: s }); }}
+                        aria-label={`More options for ${s.title}`}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '6px', borderRadius: '8px', fontSize: '16px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
+                      >⋯</button>
                     </div>
                     <AnimatePresence initial={false}>
                     {isExpanded && (
                     <motion.div key="shared-space-projects" exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
                     {spaceProjects.map((p, i) => {
                       const isOwned = projects.some(op => op.id === p.id);
+                      // Directly-shared projects can be left individually; access that
+                      // comes only via the space is dropped by leaving the space.
+                      const isDirectShare = !isOwned && sharedProjects.some(sp => sp.id === p.id);
                       return (
                         <motion.button
                           key={p.id}
@@ -584,6 +601,10 @@ export default function Sidebar({
                           transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.045, 0.35) }}
                           className={`nav-item ${(currentProjectId === p.id || currentSharedProjectId === p.id) ? 'active' : ''}`}
                           onClick={() => isOwned ? onSelect(p.id) : onSelectShared(p.id)}
+                          onContextMenu={e => {
+                            if (isOwned) { e.preventDefault(); setContextMenu({ open: true, x: e.clientX, y: e.clientY, project: p }); }
+                            else if (isDirectShare) { e.preventDefault(); setSharedCtxMenu({ open: true, x: e.clientX, y: e.clientY, kind: 'project', item: p }); }
+                          }}
                           style={{ paddingLeft: '28px', fontSize: '13px', width: '100%' }}
                         >
                           <span className="nav-dot" style={{ background: p.color }}></span>
@@ -608,16 +629,29 @@ export default function Sidebar({
                 );
               })}
               {sharedProjects.map(p => (
-                <button
+                <div
                   key={p.id}
-                  className={`nav-item ${currentSharedProjectId === p.id ? 'active' : ''}`}
-                  onClick={() => onSelectShared(p.id)}
-                  title={`Shared by ${p.sharedBy}`}
+                  style={{ display: 'flex', alignItems: 'center' }}
+                  onContextMenu={e => { e.preventDefault(); setSharedCtxMenu({ open: true, x: e.clientX, y: e.clientY, kind: 'project', item: p }); }}
                 >
-                  <span className="nav-dot" style={{ background: p.color }}></span>
-                  <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{p.title}</span>
-                  <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0 }}>👥</span>
-                </button>
+                  <button
+                    className={`nav-item ${currentSharedProjectId === p.id ? 'active' : ''}`}
+                    onClick={() => onSelectShared(p.id)}
+                    title={`Shared by ${p.ownerInfo?.name || p.sharedBy || 'someone'}`}
+                    style={{ flex: 1 }}
+                  >
+                    <span className="nav-dot" style={{ background: p.color }}></span>
+                    <span className="nav-proj-title" style={{ flex: 1, textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{p.title}</span>
+                    <span style={{ fontSize: '10px', background: 'var(--surface3)', color: 'var(--muted)', padding: '2px 6px', borderRadius: '8px', fontWeight: '700', flexShrink: 0 }}>👥</span>
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setSharedCtxMenu({ open: true, x: r.right, y: r.bottom, kind: 'project', item: p }); }}
+                    aria-label={`More options for ${p.title}`}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--faint)', cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', fontSize: '14px', flexShrink: 0, lineHeight: 1, transition: 'color 0.15s' }}
+                    onMouseEnter={e => e.currentTarget.style.color = 'var(--muted)'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--faint)'}
+                  >⋯</button>
+                </div>
               ))}
             </div>
           </>
@@ -654,6 +688,31 @@ export default function Sidebar({
           <button className="context-menu-btn" onClick={() => { setShowEditSpace(spaceCtxMenu.space); setSpaceCtxMenu(p => ({ ...p, open: false })); }}>✎ Edit space</button>
           <button className="context-menu-btn" onClick={() => { onShareSpace?.(spaceCtxMenu.space.id); setSpaceCtxMenu(p => ({ ...p, open: false })); }}>👥 Share space</button>
           <button className="context-menu-btn danger" onClick={() => confirmDeleteSpace()}>🗑 Delete space</button>
+        </div>
+      )}
+
+      {/* Shared item context menu — items shared with me by someone else */}
+      {sharedCtxMenu.open && sharedCtxMenu.item && (
+        <div className="context-menu open" style={{ position: 'fixed', left: sharedCtxMenu.x, top: sharedCtxMenu.y, zIndex: 9999 }} onClick={e => e.stopPropagation()}>
+          <div style={{ padding: '6px 12px 4px', fontSize: '10px', fontWeight: '800', color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+            Shared by {sharedCtxMenu.item.ownerInfo?.name || 'someone'}
+          </div>
+          <button
+            className="context-menu-btn"
+            onClick={() => {
+              const { kind, item } = sharedCtxMenu;
+              setSharedCtxMenu(p => ({ ...p, open: false }));
+              kind === 'space' ? onSelectSharedSpace(item.id) : onSelectShared(item.id);
+            }}
+          >↗ Open {sharedCtxMenu.kind}</button>
+          <button
+            className="context-menu-btn danger"
+            onClick={() => {
+              const { kind, item } = sharedCtxMenu;
+              setSharedCtxMenu(p => ({ ...p, open: false }));
+              onLeaveShared?.(kind, item);
+            }}
+          >🚪 Leave {sharedCtxMenu.kind}</button>
         </div>
       )}
 

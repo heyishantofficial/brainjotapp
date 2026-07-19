@@ -7,7 +7,6 @@ import { getContrastColor } from '../utils/colors';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
 import CallButton from '../components/CallButton';
 import CallBanner from '../components/CallBanner';
-import DialogModal from '../components/DialogModal';
 
 const projectProgress = (p) => {
   if (!p.tasks || p.tasks.length === 0) return 0;
@@ -28,7 +27,6 @@ export default function SpaceView({
   canAddProject = true,
   isSharedView = false,
   sharedBy = '',
-  onLeaveSpace,
   onOpenCollab,
   onEditSpace,
   onOpenSearch,
@@ -49,8 +47,6 @@ export default function SpaceView({
   // Tasks checked off moments ago stay on their focus card briefly so the
   // checkbox animation can play before the card leaves the rail.
   const [recentlyDone, setRecentlyDone] = useState(() => new Set());
-  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   // Smooth add/remove/restore animation for the projects grid
   const [projGridRef] = useAutoAnimate();
 
@@ -86,14 +82,6 @@ export default function SpaceView({
       const next = new Set(prev); next.delete(tId); return next;
     }), 900);
     onToggleTask(pId, tId);
-  };
-
-  const leaveSpace = async () => {
-    if (leaving) return;
-    setLeaving(true);
-    await onLeaveSpace?.();
-    setLeaving(false);
-    setShowLeaveDialog(false);
   };
 
   const handleDropGlobal = async (e, targetPid) => {
@@ -175,34 +163,8 @@ export default function SpaceView({
               borderRadius: '20px',
               letterSpacing: '0.5px'
             }}>{canAddProject ? 'EDITOR' : 'READ ONLY'}</span>
-            <button
-              onClick={() => setShowLeaveDialog(true)}
-              title="Leave this space — you will lose access"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(239,68,68,0.4)',
-                color: '#ef4444',
-                fontSize: '12px',
-                fontWeight: '700',
-                padding: '5px 12px',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Leave space
-            </button>
           </div>
         )}
-
-        <DialogModal
-          isOpen={showLeaveDialog}
-          type="confirm"
-          title="Leave space"
-          message={`Leave "${space.title}"? You will lose access to this space and its projects. ${sharedBy ? `${sharedBy} can re-invite you later.` : 'The owner can re-invite you later.'}`}
-          onConfirm={leaveSpace}
-          onCancel={() => setShowLeaveDialog(false)}
-        />
 
       <div
         className="detail-header"
