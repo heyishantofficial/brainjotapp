@@ -4,6 +4,15 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+
+# Vite bakes VITE_* vars into the bundle at BUILD time — they must arrive as
+# build args (Dokploy forwards its Environment-tab vars to the build). The API
+# URL is deliberately absent: nginx proxies /api same-origin.
+ARG VITE_POSTHOG_KEY
+ARG VITE_POSTHOG_HOST
+ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
+ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
+
 RUN npm run build
 
 # Production stage
