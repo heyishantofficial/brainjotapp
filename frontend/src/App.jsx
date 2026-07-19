@@ -1039,10 +1039,17 @@ export default function App() {
             callType={myActiveCall.callType}
             isHost={myActiveCall.isHost}
             callId={myActiveCall.callId}
-            collaborators={
-              [...(appData.projects || []), ...sharedProjects].find(p => p.id === myActiveCall.callId)?.collaborators ||
-              [...(appData.spaces || []), ...sharedSpaces].find(s => s.id === myActiveCall.callId)?.collaborators || []
-            }
+            collaborators={(() => {
+              // For project calls, include space-level collaborators so they can be invited too
+              const callProject = [...(appData.projects || []), ...sharedProjects].find(p => p.id === myActiveCall.callId);
+              if (callProject) {
+                const parentSpace = callProject.spaceId ? [...(appData.spaces || []), ...sharedSpaces].find(s => s.id === callProject.spaceId) : null;
+                const directIds = new Set((callProject.collaborators || []).map(c => c.userId).filter(Boolean));
+                const viaSpace = (parentSpace?.collaborators || []).filter(c => c.userId && !directIds.has(c.userId));
+                return [...(callProject.collaborators || []), ...viaSpace];
+              }
+              return [...(appData.spaces || []), ...sharedSpaces].find(s => s.id === myActiveCall.callId)?.collaborators || [];
+            })()}
             pendingJoinRequests={pendingJoinRequests.filter(r => r.callId === myActiveCall.callId)}
             onAcceptJoin={acceptJoin}
             onRejectJoin={rejectJoin}

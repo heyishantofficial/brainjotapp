@@ -109,7 +109,9 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
   // Merge direct project collaborators with space-level collaborators (dedup by userId)
   const directCollabs = project.collaborators || [];
   const directUserIds = new Set(directCollabs.map(c => c.userId).filter(Boolean));
-  const extraSpaceCollabs = spaceCollaborators.filter(c => c.userId && !directUserIds.has(c.userId));
+  const extraSpaceCollabs = spaceCollaborators
+    .filter(c => c.userId && !directUserIds.has(c.userId))
+    .map(c => ({ ...c, viaSpace: true }));
   const allCollaborators = [...directCollabs, ...extraSpaceCollabs];
 
   // For shared views include the owner so collaborators can @mention them
@@ -563,9 +565,10 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
           <div className="detail-actions">
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {/* Call button — rendered unconditionally so it is visible to users */}
+              {/* Call button — rendered unconditionally so it is visible to users.
+                  Space-level collaborators count as project members for call gating. */}
               <CallButton
-                project={project}
+                project={{ ...project, collaborators: allCollaborators }}
                 onStartCall={onStartCall}
                 hasActiveCall={!!incomingCall}
                 isInCall={isInCall}
@@ -578,21 +581,21 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 style={{ background: `${getContrastColor(project.color)}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}
               >
                 <div className="tooltip-content">
-                  {(project.collaborators || []).length > 0
-                    ? (project.collaborators || []).map(c => c.name).join('\n')
+                  {allCollaborators.length > 0
+                    ? allCollaborators.map(c => c.viaSpace ? `${c.name} (via space)` : c.name).join('\n')
                     : 'No collaborators yet — invite someone!'}
                 </div>
                 <div className="project-collab-summary" style={{ margin: 0 }}>
                   <div className="collab-stack" style={{ display: 'flex' }}>
-                    {(project.collaborators || []).slice(0, 4).map(c => (
-                      <div key={c.id} className="collab-chip" title={c.name} style={{ border: 'none', background: getContrastColor(project.color), color: project.color }}>{initials(c.name)}</div>
+                    {allCollaborators.slice(0, 4).map(c => (
+                      <div key={c.id || c.userId} className="collab-chip" title={c.viaSpace ? `${c.name} (via space)` : c.name} style={{ border: 'none', background: getContrastColor(project.color), color: project.color }}>{initials(c.name)}</div>
                     ))}
-                    {(!project.collaborators || project.collaborators.length === 0) && (
+                    {allCollaborators.length === 0 && (
                       <div className="collab-chip" style={{ border: 'none', background: getContrastColor(project.color), color: project.color }}>+</div>
                     )}
                   </div>
                   <span className="collab-count" style={{ color: `${getContrastColor(project.color)}cc`, fontWeight: '600' }}>
-                    {(project.collaborators || []).length ? `${project.collaborators.length} collaborator${project.collaborators.length > 1 ? 's' : ''}` : 'No collaborators yet'}
+                    {allCollaborators.length ? `${allCollaborators.length} collaborator${allCollaborators.length > 1 ? 's' : ''}` : 'No collaborators yet'}
                   </span>
                 </div>
                 {!isSharedView && (
