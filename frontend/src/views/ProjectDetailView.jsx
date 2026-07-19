@@ -837,6 +837,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                       onSaveNotes={(txt) => saveTaskNotes(t.id, txt)}
                       onOpenWordpad={(content) => onOpenWordpad('task', t.id, content)}
                       onUploadComplete={onUpdate}
+                      onToast={onToast}
                       onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                       onOpenLightbox={onOpenLightbox}
                       highlighted={highlightedTaskId === t.id || focusTaskId === t.id}
@@ -890,6 +891,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                           onSaveNotes={(txt) => saveTaskNotes(t.id, txt)}
                           onOpenWordpad={(content) => onOpenWordpad('task', t.id, content)}
                           onUploadComplete={onUpdate}
+                          onToast={onToast}
                           onDeleteFile={(fid) => { api('delete_task_file', { projectId: project.id, taskId: t.id, fileId: fid }).then(onUpdate) }}
                           onOpenLightbox={onOpenLightbox}
                           highlighted={highlightedTaskId === t.id || focusTaskId === t.id}

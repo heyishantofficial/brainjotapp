@@ -22,6 +22,7 @@ export default function TaskItem({
   onSaveNotes,
   onOpenWordpad,
   onUploadComplete,
+  onToast,
   onDeleteFile,
   onOpenLightbox,
   highlighted,
@@ -272,7 +273,8 @@ export default function TaskItem({
   const handleFileUpload = async (files) => {
     if (!files || files.length === 0) return;
     for (let i = 0; i < files.length; i++) {
-      await apiUpload(files[i], { type: 'task', projectId: project.id, taskId: task.id });
+      const r = await apiUpload(files[i], { type: 'task', projectId: project.id, taskId: task.id });
+      if (r?.error) onToast?.(r.error);
     }
     fileInputRef.current.value = '';
     onUploadComplete();
