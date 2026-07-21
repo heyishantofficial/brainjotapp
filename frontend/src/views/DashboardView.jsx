@@ -208,7 +208,7 @@ export default function DashboardView({
   } else if (needsAttention > 0) {
     greetingSub = `${needsAttention} task${needsAttention === 1 ? ' needs' : 's need'} your attention today.`;
   } else if (focusTasks.length > 0) {
-    greetingSub = 'Nothing urgent today — pick your own pace.';
+    greetingSub = 'Nothing urgent today, pick your own pace.';
   } else {
     greetingSub = 'All your deadlines, neatly categorized.';
   }
