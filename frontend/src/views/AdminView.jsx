@@ -926,6 +926,28 @@ function AdminDashboard({ currentUser, onLogout }) {
   );
 }
 
+// ── Info tooltip ("!" button) — hover to explain what a metric shows and why
+// it matters. Used next to every new metric label below. ──────────────────────
+
+function InfoTip({ text }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', marginLeft: '5px', verticalAlign: 'middle' }}>
+      <span
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '14px', height: '14px', borderRadius: '50%', background: T.border2, color: T.sub, fontSize: '10px', fontWeight: '900', cursor: 'help', flexShrink: 0 }}
+      >!</span>
+      {show && (
+        <span style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', background: '#000', border: `1px solid ${T.border2}`, borderRadius: '8px', padding: '10px 12px', fontSize: '11.5px', color: '#ddd', width: '240px', zIndex: 50, lineHeight: '1.45', boxShadow: '0 8px 24px rgba(0,0,0,.5)', fontWeight: '400', textTransform: 'none', letterSpacing: 'normal' }}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ── Growth tab ────────────────────────────────────────────────────────────────
 
 const tileStyle = { background: T.card, border: `1px solid ${T.border2}`, borderRadius: '14px', padding: '14px 16px', minWidth: '130px', flex: 1 };
@@ -949,17 +971,20 @@ function GrowthTab() {
     { label: 'Returned in week 2', value: data.funnel.returnedWeek2 },
   ];
 
+  const tt = data.timeToValue, ap = data.activationProof, cd = data.collabDepth, kf = data.kfactor, te = data.taskEngine;
+  const taskEngineMax = Math.max(1, ...(te?.series14d || []).flatMap((d) => [d.created, d.completed]));
+
   return (
     <div>
       <div style={sectionTitle}>This week (started {a.weekOf})</div>
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <div style={tileStyle}><div style={tileLabel}>Active this week</div><div style={tileValue}>{a.activeThisWeek}</div><div style={{ fontSize: '11px', color: T.muted }}>{a.activeLastWeek} last week</div></div>
-        <div style={tileStyle}><div style={tileLabel}>New</div><div style={{ ...tileValue, color: T.green }}>{a.new}</div></div>
-        <div style={tileStyle}><div style={tileLabel}>Retained</div><div style={tileValue}>{a.retained}</div></div>
-        <div style={tileStyle}><div style={tileLabel}>Resurrected</div><div style={{ ...tileValue, color: T.blue }}>{a.resurrected}</div></div>
-        <div style={tileStyle}><div style={tileLabel}>Churned</div><div style={{ ...tileValue, color: T.red }}>{a.churned}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Active this week <InfoTip text="Unique users who took any authenticated action this week. The base number everything else is measured against." /></div><div style={tileValue}>{a.activeThisWeek}</div><div style={{ fontSize: '11px', color: T.muted }}>{a.activeLastWeek} last week</div></div>
+        <div style={tileStyle}><div style={tileLabel}>New <InfoTip text="Users who signed up this week. Growth you bought or earned this week — the top of the funnel." /></div><div style={{ ...tileValue, color: T.green }}>{a.new}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Retained <InfoTip text="Active last week AND active this week. Your durable base — the number that compounds if it grows." /></div><div style={tileValue}>{a.retained}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Resurrected <InfoTip text="Signed up before last week, inactive last week, back this week. Proof the product is worth returning to — a win-back, not a new acquisition." /></div><div style={{ ...tileValue, color: T.blue }}>{a.resurrected}</div></div>
+        <div style={tileStyle}><div style={tileLabel}>Churned <InfoTip text="Active last week, gone this week. Every user here is a leak in the bucket — watch this rise before total users falls." /></div><div style={{ ...tileValue, color: T.red }}>{a.churned}</div></div>
         <div style={tileStyle}>
-          <div style={tileLabel}>Quick ratio</div>
+          <div style={tileLabel}>Quick ratio <InfoTip text="(New + Resurrected) ÷ Churned. Below 1 = you're losing users faster than gaining them — fix retention before spending on growth. Above 1 = the bucket is filling faster than it leaks." /></div>
           <div style={{ ...tileValue, color: a.quickRatio == null ? T.muted : a.quickRatio >= 1 ? T.green : T.red }}>{a.quickRatio == null ? '—' : a.quickRatio}</div>
           <div style={{ fontSize: '11px', color: T.muted }}>(new+resurrected) / churned</div>
         </div>
@@ -1006,6 +1031,76 @@ function GrowthTab() {
       <div style={{ ...tileStyle, maxWidth: '520px' }}>
         <HBarChart data={funnel} color={T.accent} />
       </div>
+
+      <div style={sectionTitle}>
+        Does activation predict retention? <InfoTip text="Splits signups old enough to have a 'week 4' into activated (5+ tasks in week 1) vs not, then compares who's still active 4 weeks later. If activated users retain much better, the 5-task rule is the RIGHT thing for onboarding to optimize for. If there's no gap, the definition needs rethinking." />
+      </div>
+      {ap && ap.cohortSize > 0 ? (
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={tileStyle}><div style={tileLabel}>Cohort (4+ wks old)</div><div style={tileValue}>{ap.cohortSize}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Activated</div><div style={tileValue}>{ap.activatedCount}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Activated → wk4 retention</div><div style={{ ...tileValue, color: T.green }}>{ap.activatedWeek4RetentionPct == null ? '—' : `${ap.activatedWeek4RetentionPct}%`}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Non-activated → wk4 retention</div><div style={{ ...tileValue, color: T.red }}>{ap.nonActivatedWeek4RetentionPct == null ? '—' : `${ap.nonActivatedWeek4RetentionPct}%`}</div></div>
+        </div>
+      ) : <div style={{ color: T.muted, fontSize: '12px' }}>Not enough signups 4+ weeks old yet.</div>}
+
+      <div style={sectionTitle}>
+        Collaboration depth <InfoTip text="Of everyone active this week, what share is in a shared project or space — and are they stickier week-over-week than solo users? If collab users retain notably better, sharing/inviting is your real retention lever, not a nice-to-have." />
+      </div>
+      {cd && (
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={tileStyle}><div style={tileLabel}>In a shared project/space</div><div style={tileValue}>{cd.inSharedPct == null ? '—' : `${cd.inSharedPct}%`}</div><div style={{ fontSize: '11px', color: T.muted }}>{cd.inSharedCount} of {cd.activeUsersThisWeek} active</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Collab users' wk/wk retention</div><div style={{ ...tileValue, color: T.green }}>{cd.collabWeekOverWeekRetentionPct == null ? '—' : `${cd.collabWeekOverWeekRetentionPct}%`}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Solo users' wk/wk retention</div><div style={tileValue}>{cd.soloWeekOverWeekRetentionPct == null ? '—' : `${cd.soloWeekOverWeekRetentionPct}%`}</div></div>
+        </div>
+      )}
+
+      <div style={sectionTitle}>
+        Viral loop — K-factor <InfoTip text="Lifetime snapshot (not a weekly trend — invite links don't keep history once used): total collaborator seats filled ÷ total users, and what share of users have ever invited someone. A K-factor near or above 1 means the app is substantially growing itself through invites, not just marketing. A proper week-over-week trend will build up from the invite_sent / invite_accepted events now being tracked." />
+      </div>
+      {kf && (
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={tileStyle}><div style={tileLabel}>Accepted invites (lifetime)</div><div style={tileValue}>{kf.acceptedLifetime}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Avg accepted / user</div><div style={{ ...tileValue, color: kf.avgAcceptedPerUser >= 1 ? T.green : T.text }}>{kf.avgAcceptedPerUser ?? '—'}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>% of users who've invited someone</div><div style={tileValue}>{kf.inviterRatePct == null ? '—' : `${kf.inviterRatePct}%`}</div><div style={{ fontSize: '11px', color: T.muted }}>{kf.inviterUsers} of {kf.totalUsers}</div></div>
+        </div>
+      )}
+
+      <div style={sectionTitle}>
+        Time to value <InfoTip text="For users who signed up in the last 90 days: how many minutes until their first task, and how many hours until their first completed task. This is the single best predictor of whether a new user 'gets it' — a slow first win here means the first-run screen needs work, not more features." />
+      </div>
+      {tt && (
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={tileStyle}><div style={tileLabel}>Median time to first task</div><div style={tileValue}>{tt.medianMinutesToFirstTask == null ? '—' : `${tt.medianMinutesToFirstTask}m`}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Median time to first completion</div><div style={tileValue}>{tt.medianHoursToFirstCompletion == null ? '—' : `${tt.medianHoursToFirstCompletion}h`}</div></div>
+          <div style={tileStyle}><div style={tileLabel}>Sample size</div><div style={tileValue}>{tt.sampleSize}</div><div style={{ fontSize: '11px', color: T.muted }}>last {tt.windowDays}d signups</div></div>
+        </div>
+      )}
+
+      <div style={sectionTitle}>
+        Task engine — created vs completed (14d) <InfoTip text="If 'created' consistently outruns 'completed', tasks are piling up faster than they're finished — a sign of overwhelm, not productivity. The completion ratio is created-vs-completed over the same window; overdue % is a sampled snapshot of open tasks past their deadline." />
+      </div>
+      {te && (
+        <>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <div style={tileStyle}><div style={tileLabel}>Completion ratio (14d)</div><div style={{ ...tileValue, color: te.completionRatioPct >= 80 ? T.green : te.completionRatioPct >= 50 ? T.amber : T.red }}>{te.completionRatioPct == null ? '—' : `${te.completionRatioPct}%`}</div></div>
+            <div style={tileStyle}><div style={tileLabel}>Overdue open tasks</div><div style={{ ...tileValue, color: te.overdueOpenPct >= 30 ? T.red : T.text }}>{te.overdueOpenPct == null ? '—' : `${te.overdueOpenPct}%`}</div><div style={{ fontSize: '11px', color: T.muted }}>sample of {te.overdueSampleSize}</div></div>
+          </div>
+          <div style={{ ...tileStyle, maxWidth: '620px' }}>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '11px', marginBottom: '6px' }}>
+              <span style={{ color: T.accent }}>■ Created</span><span style={{ color: T.green }}>■ Completed</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '70px' }}>
+              {te.series14d.map((d) => (
+                <div key={d.day} style={{ flex: 1, display: 'flex', gap: '1px', alignItems: 'flex-end', height: '100%' }} title={`${d.day}: ${d.created} created, ${d.completed} completed`}>
+                  <div style={{ flex: 1, background: T.accent, opacity: 0.75, height: `${Math.max(2, (d.created / taskEngineMax) * 100)}%`, borderRadius: '2px 2px 0 0' }} />
+                  <div style={{ flex: 1, background: T.green, opacity: 0.75, height: `${Math.max(2, (d.completed / taskEngineMax) * 100)}%`, borderRadius: '2px 2px 0 0' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ const spaceCollaboratorSchema = new mongoose.Schema({
   email:     String,
   role:      { type: String, default: 'editor' },
   avatarUrl: String,
+  joinedAt:  { type: Date, default: Date.now },
 }, { _id: false });
 
 const spaceSchema = new mongoose.Schema({

@@ -25,6 +25,9 @@ const collaboratorSchema = new mongoose.Schema({
   role: String,
   status: String,
   avatarUrl: String,
+  // Absent on rows pushed before this field existed — the admin K-factor trend
+  // treats those as "unknown join date" rather than backfilling a guess.
+  joinedAt: { type: Date, default: Date.now },
 }, { _id: false });
 
 // Task activity feed entries — newest first, capped in routes/api.js (logTaskActivity).

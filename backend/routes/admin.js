@@ -531,6 +531,7 @@ const wkey = (d) => mondayOf(d).toISOString().slice(0, 10);
 
 router.get('/growth', async (req, res) => {
   try {
+    const now = Date.now();
     const thisMonday = mondayOf(new Date());
     const lastMonday = new Date(thisMonday.getTime() - WEEK);
     const thisKey = wkey(thisMonday);
@@ -606,6 +607,169 @@ router.get('/growth', async (req, res) => {
       return activeWeeksByUser.get(u.id)?.has(nextWeek);
     }).length;
 
+    // ── K-factor (lifetime snapshot) ──────────────────────────────────
+    // Collaborator entries carry no historical "when generated" trail for
+    // link-based invites (the token is cleared on use), so this is a
+    // whole-history snapshot, not a weekly trend. The PostHog events
+    // invite_sent/invite_accepted (wired client-side) are what will let a
+    // real week-over-week K-factor trend be built once enough weeks accrue.
+    const totalUsersAllTime = await User.countDocuments();
+    const [projCollabAgg, spaceCollabAgg, projInviters, spaceInviters] = await Promise.all([
+      Project.aggregate([
+        { $project: { n: { $size: { $ifNull: ['$collaborators', []] } } } },
+        { $group: { _id: null, total: { $sum: '$n' } } },
+      ]),
+      Space.aggregate([
+        { $project: { n: { $size: { $ifNull: ['$collaborators', []] } } } },
+        { $group: { _id: null, total: { $sum: '$n' } } },
+      ]),
+      Project.distinct('ownerId', { 'collaborators.0': { $exists: true } }),
+      Space.distinct('ownerId', { 'collaborators.0': { $exists: true } }),
+    ]);
+    const acceptedTotal = (projCollabAgg[0]?.total || 0) + (spaceCollabAgg[0]?.total || 0);
+    const inviterUsers = new Set([...projInviters, ...spaceInviters]).size;
+    const kfactor = {
+      acceptedLifetime: acceptedTotal,
+      inviterUsers,
+      totalUsers: totalUsersAllTime,
+      avgAcceptedPerUser: totalUsersAllTime ? +(acceptedTotal / totalUsersAllTime).toFixed(2) : null,
+      inviterRatePct: totalUsersAllTime ? Math.round((inviterUsers / totalUsersAllTime) * 100) : null,
+    };
+
+    // ── Time-to-value (last 90 days of signups) ───────────────────────
+    // Median minutes to a user's first-ever task, and median hours to their
+    // first completed task. Approximate for shared projects: a task a
+    // COLLABORATOR creates on someone else's project doesn't count toward
+    // that collaborator's time-to-value (tasks have no per-task creator
+    // field) — this measures the OWNER's path, which is the common case.
+    const d90 = new Date(now - 90 * DAY);
+    const recentUsers = await User.find({ createdAt: { $gte: d90 } }).select('id createdAt -_id').lean();
+    const recentIds = recentUsers.map((u) => u.id);
+    const recentSignupAt = new Map(recentUsers.map((u) => [u.id, new Date(u.createdAt).getTime()]));
+    const [firstTaskRows, firstDoneRows] = recentIds.length ? await Promise.all([
+      Project.aggregate([
+        { $match: { ownerId: { $in: recentIds } } },
+        { $unwind: '$tasks' },
+        { $group: { _id: '$ownerId', firstTaskAt: { $min: '$tasks.createdAt' } } },
+      ]),
+      Project.aggregate([
+        { $match: { ownerId: { $in: recentIds }, 'tasks.finishedAt': { $ne: null } } },
+        { $unwind: '$tasks' },
+        { $match: { 'tasks.finishedAt': { $ne: null } } },
+        { $group: { _id: '$ownerId', firstDoneAt: { $min: '$tasks.finishedAt' } } },
+      ]),
+    ]) : [[], []];
+    const median = (arr) => {
+      if (!arr.length) return null;
+      const s = [...arr].sort((a, b) => a - b);
+      return s[Math.floor(s.length / 2)];
+    };
+    const taskMins = firstTaskRows
+      .map((r) => (new Date(r.firstTaskAt).getTime() - recentSignupAt.get(r._id)) / 60000)
+      .filter((v) => v >= 0);
+    const doneHours = firstDoneRows
+      .map((r) => (new Date(r.firstDoneAt).getTime() - recentSignupAt.get(r._id)) / 3600000)
+      .filter((v) => v >= 0);
+    const timeToValue = {
+      windowDays: 90,
+      sampleSize: taskMins.length,
+      medianMinutesToFirstTask: taskMins.length ? Math.round(median(taskMins)) : null,
+      medianHoursToFirstCompletion: doneHours.length ? +median(doneHours).toFixed(1) : null,
+    };
+
+    // ── Activation proof: does the 5-tasks-in-week-1 definition predict
+    // week-4 retention? Restricted to signups old enough to HAVE a week 4. ──
+    const fourWeeksAgo = new Date(thisMonday.getTime() - 4 * WEEK);
+    const matureCohort = cohortUsers.filter((u) => new Date(u.createdAt) <= fourWeeksAgo);
+    const isActivated = (u) => (finishedInWk1.get(u.id) || 0) >= 5;
+    const activeAtWeek4 = (u) => {
+      const wk4 = wkey(new Date(mondayOf(u.createdAt).getTime() + 4 * WEEK));
+      return activeWeeksByUser.get(u.id)?.has(wk4) || false;
+    };
+    const activatedMature = matureCohort.filter(isActivated);
+    const nonActivatedMature = matureCohort.filter((u) => !isActivated(u));
+    const activationProof = {
+      cohortSize: matureCohort.length,
+      activatedCount: activatedMature.length,
+      activatedWeek4RetentionPct: activatedMature.length
+        ? Math.round((activatedMature.filter(activeAtWeek4).length / activatedMature.length) * 100) : null,
+      nonActivatedWeek4RetentionPct: nonActivatedMature.length
+        ? Math.round((nonActivatedMature.filter(activeAtWeek4).length / nonActivatedMature.length) * 100) : null,
+    };
+
+    // ── Collaboration depth: are shared-project users stickier week over
+    // week than solo users? Uses ALL active users this week, not just the
+    // 8-week signup cohort. ──
+    const [ownerWithCollabProj, ownerWithCollabSpace, memberOfProj, memberOfSpace] = activeThis.length
+      ? await Promise.all([
+        Project.distinct('ownerId', { ownerId: { $in: activeThis }, 'collaborators.0': { $exists: true } }),
+        Space.distinct('ownerId', { ownerId: { $in: activeThis }, 'collaborators.0': { $exists: true } }),
+        Project.distinct('collaborators.userId', { 'collaborators.userId': { $in: activeThis } }),
+        Space.distinct('collaborators.userId', { 'collaborators.userId': { $in: activeThis } }),
+      ]) : [[], [], [], []];
+    const inSharedSet = new Set([...ownerWithCollabProj, ...ownerWithCollabSpace, ...memberOfProj, ...memberOfSpace]);
+    const soloActiveThis = activeThis.filter((id) => !inSharedSet.has(id));
+    const collabDepth = {
+      activeUsersThisWeek: activeThis.length,
+      inSharedCount: inSharedSet.size,
+      inSharedPct: activeThis.length ? Math.round((inSharedSet.size / activeThis.length) * 100) : null,
+      collabWeekOverWeekRetentionPct: inSharedSet.size
+        ? Math.round(([...inSharedSet].filter((id) => lastSet.has(id)).length / inSharedSet.size) * 100) : null,
+      soloWeekOverWeekRetentionPct: soloActiveThis.length
+        ? Math.round((soloActiveThis.filter((id) => lastSet.has(id)).length / soloActiveThis.length) * 100) : null,
+    };
+
+    // ── Task engine: created vs completed (14d trend), completion ratio,
+    // overdue ratio (bounded sample for cost — see comment below). ──
+    // Anchored to TODAY, not thisMonday — a weekly-bucket anchor here would
+    // silently drop every day between the most recent Monday and today.
+    const todayUTC = new Date(); todayUTC.setUTCHours(0, 0, 0, 0);
+    const seriesStart14 = new Date(todayUTC.getTime() - 13 * DAY);
+    const taskDateRows = await Project.aggregate([
+      { $match: { $or: [{ 'tasks.createdAt': { $gte: seriesStart14 } }, { 'tasks.finishedAt': { $gte: seriesStart14 } }] } },
+      { $unwind: '$tasks' },
+      { $match: { $or: [{ 'tasks.createdAt': { $gte: seriesStart14 } }, { 'tasks.finishedAt': { $gte: seriesStart14 } }] } },
+      { $project: { _id: 0, createdAt: '$tasks.createdAt', finishedAt: '$tasks.finishedAt' } },
+    ]);
+    const createdByDay = {};
+    const completedByDay = {};
+    for (const r of taskDateRows) {
+      if (r.createdAt >= seriesStart14) {
+        const k = new Date(r.createdAt).toISOString().slice(0, 10);
+        createdByDay[k] = (createdByDay[k] || 0) + 1;
+      }
+      if (r.finishedAt && r.finishedAt >= seriesStart14) {
+        const k = new Date(r.finishedAt).toISOString().slice(0, 10);
+        completedByDay[k] = (completedByDay[k] || 0) + 1;
+      }
+    }
+    const taskSeries = Array.from({ length: 14 }, (_, i) => {
+      const day = new Date(seriesStart14.getTime() + i * DAY).toISOString().slice(0, 10);
+      return { day, created: createdByDay[day] || 0, completed: completedByDay[day] || 0 };
+    });
+    const createdSum = taskSeries.reduce((s, d) => s + d.created, 0);
+    const completedSum = taskSeries.reduce((s, d) => s + d.completed, 0);
+    // Overdue ratio: sampled at 20k open tasks — a ratio, not a count, so a
+    // bounded sample is fine and keeps this cheap as task volume grows.
+    const openTaskRows = await Project.aggregate([
+      { $match: { 'tasks.done': false } },
+      { $unwind: '$tasks' },
+      { $match: { 'tasks.done': false } },
+      { $project: { _id: 0, deadline: '$tasks.deadline' } },
+      { $limit: 20000 },
+    ]);
+    let overdueCount = 0;
+    for (const r of openTaskRows) {
+      const d = r.deadline ? new Date(r.deadline) : null;
+      if (d && !isNaN(d) && d.getTime() < now) overdueCount++;
+    }
+    const taskEngine = {
+      series14d: taskSeries,
+      completionRatioPct: createdSum ? Math.round((completedSum / createdSum) * 100) : null,
+      overdueOpenPct: openTaskRows.length ? Math.round((overdueCount / openTaskRows.length) * 100) : null,
+      overdueSampleSize: openTaskRows.length,
+    };
+
     res.json({
       accounting: {
         weekOf: thisKey,
@@ -627,6 +791,11 @@ router.get('/growth', async (req, res) => {
         activated,          // 5+ tasks completed within week 1
         returnedWeek2: returned,
       },
+      kfactor,
+      timeToValue,
+      activationProof,
+      collabDepth,
+      taskEngine,
     });
   } catch (err) {
     console.error('[admin/growth]', err);
