@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const contentDisposition = require('content-disposition');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const disposableDomains = new Set(require('disposable-email-domains'));
@@ -534,7 +535,7 @@ router.get('/download', requireAuth, (req, res) => {
 
   if (!fileUrl) return res.status(400).send('File URL is required');
 
-  // R2 files have a full HTTPS public URL — only redirect to our own R2 bucket domain.
+  // R2 files have a full HTTPS public URL — only proxy from our own R2 bucket domain.
   // Use strict hostname comparison instead of string prefix to prevent subdomain bypass attacks.
   if (fileUrl.startsWith('https://')) {
     const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
@@ -548,7 +549,25 @@ router.get('/download', requireAuth, (req, res) => {
     } catch {
       return res.status(400).send('Invalid file URL');
     }
-    return res.redirect(fileUrl);
+    // Stream the object through our own server instead of redirecting —
+    // a redirect hands the browser the raw R2 URL, and R2 objects aren't
+    // stored with Content-Disposition: attachment, so browsers render
+    // supported types (PDF, images) inline in a new tab/window rather
+    // than saving to disk. Proxying lets us force the attachment header.
+    const upstream = https.get(fileUrl, { timeout: 15000 }, (upstreamRes) => {
+      if (upstreamRes.statusCode !== 200) {
+        res.status(502).send('Failed to fetch file');
+        upstreamRes.resume();
+        return;
+      }
+      res.setHeader('Content-Disposition', contentDisposition(originalName || path.basename(fileUrl)));
+      res.setHeader('Content-Type', upstreamRes.headers['content-type'] || 'application/octet-stream');
+      if (upstreamRes.headers['content-length']) res.setHeader('Content-Length', upstreamRes.headers['content-length']);
+      upstreamRes.pipe(res);
+    });
+    upstream.on('error', () => { if (!res.headersSent) res.status(502).send('Failed to fetch file'); });
+    upstream.on('timeout', () => upstream.destroy());
+    return;
   }
 
   // Local dev: serve from disk
