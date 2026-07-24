@@ -637,7 +637,7 @@ export default function TaskItem({
                       {isImg && (
                         <button className="btn-tf" onClick={() => onOpenLightbox(f.url.startsWith('http') ? f.url : `/${f.url}`)}>View</button>
                       )}
-                      <a className="btn-tf" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} target="_blank" rel="noreferrer" title="Download">↓</a>
+                      <a className="btn-tf" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} title="Download">↓</a>
                       {!readOnly && <button className="btn-tf del" onClick={() => onDeleteFile(f.id)}>✕</button>}
                     </div>
                   </div>

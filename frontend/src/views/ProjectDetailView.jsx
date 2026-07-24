@@ -1002,7 +1002,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                         <img src={f.url.startsWith('http') ? f.url : `/${f.url}`} alt={f.name} loading="lazy" />
                         <div className="img-thumb-overlay">
                           <button className="btn-file" onClick={(e) => { e.stopPropagation(); onOpenLightbox(f.url.startsWith('http') ? f.url : `/${f.url}`); }}>View</button>
-                          <a className="btn-file" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} onClick={e => e.stopPropagation()} target="_blank" rel="noreferrer" title="Download">↓</a>
+                          <a className="btn-file" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} onClick={e => e.stopPropagation()} title="Download">↓</a>
                           <button className="btn-file del" onClick={(e) => { e.stopPropagation(); deleteFile(f.id); }}>Del</button>
                         </div>
                       </div>
@@ -1021,7 +1021,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                         <div className="file-meta">{f.type.toUpperCase()} · {formatSize(f.size)} · {f.uploaded}</div>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <a className="btn-file" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)} target="_blank" rel="noreferrer">↓</a>
+                        <a className="btn-file" href={apiUrl(`/api/download?url=${encodeURIComponent(f.url)}&name=${encodeURIComponent(f.name)}`)}>↓</a>
                         <button className="btn-file del" onClick={() => deleteFile(f.id)}>✕</button>
                       </div>
                     </div>
