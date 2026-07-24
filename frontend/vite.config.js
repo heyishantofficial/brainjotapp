@@ -46,6 +46,11 @@ export default defineConfig({
         // the generated SW — generateSW mode has nowhere else to put them.
         importScripts: ['push-sw.js'],
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Default navigateFallback (SPA shell) would otherwise intercept
+        // top-level navigations to /api/* — e.g. the file-download link
+        // (target="_blank") — and serve index.html instead of the real
+        // response, so those never reach the network.
+        navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
             // API calls — NetworkFirst: try live, fall back to 5-minute stale cache.
