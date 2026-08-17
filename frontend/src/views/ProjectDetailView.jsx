@@ -561,6 +561,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
 
       <div
         className="detail-header"
+        data-tour="proj-header"
         style={{
           position: 'relative',
           background: project.color,
@@ -585,17 +586,20 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               {/* Call button — rendered unconditionally so it is visible to users.
                   Space-level collaborators count as project members for call gating. */}
-              <CallButton
-                project={{ ...project, collaborators: allCollaborators }}
-                onStartCall={onStartCall}
-                hasActiveCall={!!incomingCall}
-                isInCall={isInCall}
-                contrastColor={getContrastColor(project.color)}
-                livekitEnabled={livekitEnabled}
-                onToast={onToast}
-              />
+              <span data-tour="proj-call" style={{ display: 'flex' }}>
+                <CallButton
+                  project={{ ...project, collaborators: allCollaborators }}
+                  onStartCall={onStartCall}
+                  hasActiveCall={!!incomingCall}
+                  isInCall={isInCall}
+                  contrastColor={getContrastColor(project.color)}
+                  livekitEnabled={livekitEnabled}
+                  onToast={onToast}
+                />
+              </span>
               <div
-                className="collab-pill has-tooltip" 
+                className="collab-pill has-tooltip"
+                data-tour="proj-collab"
                 style={{ background: `${getContrastColor(project.color)}26`, padding: '8px 8px 8px 16px', borderRadius: '24px', display: 'flex', alignItems: 'center', gap: '16px' }}
               >
                 <div className="tooltip-content">
@@ -622,9 +626,10 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
               </div>
 
               {!isSharedView && (
-                <button 
-                  className="icon-action-btn" 
-                  onClick={() => setShowEditProject(true)} 
+                <button
+                  className="icon-action-btn"
+                  onClick={() => setShowEditProject(true)}
+                  data-tour="proj-settings"
                   title="Project Settings"
                   style={{ 
                     background: `${getContrastColor(project.color)}26`, 
@@ -661,7 +666,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             <div className="section-head">
               <span className="section-head-title">Tasks</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ position: 'relative' }} ref={viewMenuRef}>
+                <div style={{ position: 'relative' }} ref={viewMenuRef} data-tour="proj-views">
                   <button className="view-switch-btn" onClick={() => setShowViewMenu(v => !v)} title="Change view">
                     {(() => {
                       const active = VIEW_OPTIONS.find(o => o.key === viewMode) || VIEW_OPTIONS[0];
@@ -691,6 +696,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
                 <span style={{ fontSize: '11px', color: 'var(--faint)' }}>{project.tasks?.length || 0} total</span>
                 <button
                   onClick={() => setShowFilters(!showFilters)}
+                  data-tour="proj-filters"
                   style={{
                     background: (showFilters || labelFilter || assigneeFilter !== 'all' || hideCompleted) ? 'var(--surface3)' : 'transparent',
                     border: 'none',
@@ -871,7 +877,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             )}
 
             {(!isSharedView || currentUserRole === 'editor') && (
-              <div className="add-row">
+              <div className="add-row" data-tour="proj-add-task">
                 <input
                   ref={addTaskInputRef}
                   className="add-input"
@@ -926,7 +932,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             )}
           </div>
 
-          <div className="section-card">
+          <div className="section-card" data-tour="proj-notes">
             <div className="section-head">
               <span className="section-head-title">Project notes</span>
               <span style={{ fontSize: '11px', color: notesSaveError ? '#ef4444' : 'var(--faint)' }}>{notesStatus}</span>
@@ -955,7 +961,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
         </div>
 
         <div id="detail-right">
-          <div className="section-card">
+          <div className="section-card" data-tour="proj-files">
             <div className="section-head"><span className="section-head-title">Project files</span></div>
             <div className="section-body">
               <div
@@ -1036,7 +1042,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
           </div>
 
           {/* ── Activity Feed ── */}
-          <div className="section-card">
+          <div className="section-card" data-tour="proj-activity">
             <div
               className="section-head"
               role="button"

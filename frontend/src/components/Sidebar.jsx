@@ -359,6 +359,7 @@ export default function Sidebar({
           <div className="logo-text">BrainJot</div>
           <button
             onClick={onOpenProfile}
+            data-tour="nav-profile"
             title="View your profile"
             aria-label="Open profile"
             style={{
@@ -392,11 +393,14 @@ export default function Sidebar({
         <button
           className={`nav-item ${!currentProjectId && !currentSpaceId ? 'active' : ''}`}
           onClick={() => { onSelect(null); onSelectSpace(null); }}
+          data-tour="nav-brainview"
         >
           <span style={{ fontSize: '14px' }}>⊞</span> Brainview
         </button>
 
-        {/* Spaces */}
+        {/* Spaces — label and list share a wrapper so the app tour can
+            spotlight the whole block, including on brand-new empty accounts */}
+        <div data-tour="nav-spaces">
         <div className="nav-label" style={{ marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>Spaces</span>
           <button onClick={onAddSpace} title="New Space" style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '0 2px', fontWeight: '400', display: 'flex', alignItems: 'center' }}>+</button>
@@ -539,6 +543,7 @@ export default function Sidebar({
             );
           })}
         </Reorder.Group>
+        </div>
 
 
         {/* Shared with me */}
@@ -548,7 +553,7 @@ export default function Sidebar({
               <span>Shared with me</span>
               <span style={{ background: 'var(--accent)', color: '#000', fontSize: '9px', fontWeight: '900', padding: '1px 6px', borderRadius: '20px', letterSpacing: '0.5px' }}>{sharedSpaces.length + sharedProjects.length}</span>
             </div>
-            <div id="nav-shared">
+            <div id="nav-shared" data-tour="nav-shared">
               {sharedSpaces.map(s => {
                 const spaceProjects = (s.projects || []).filter(p => !p.archived);
                 const isExpanded = expandedSpaces.has(s.id);
@@ -659,7 +664,7 @@ export default function Sidebar({
       </MotionNav>
 
       <div className="sb-bottom">
-        <a className="sb-community-btn" href={COMMUNITY_URL} title="brainjot Community">
+        <a className="sb-community-btn" href={COMMUNITY_URL} title="brainjot Community" data-tour="nav-community">
           <Users size={17} strokeWidth={2.5} />
           BJ Community
           {communityUnread > 0 && (

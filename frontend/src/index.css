@@ -1654,3 +1654,62 @@ body.theme-switching,body.theme-switching *,body.theme-switching *::before,body.
   .cal-chips,.cal-more{display:none}
   .cal-dots{display:flex}
 }
+
+/* ── APP TOUR (guided walkthrough) ── */
+/* The dim comes from the spotlight's own giant box-shadow, so the lit hole
+   and the darkness are always in sync — nothing to keep in step by hand. */
+:root{--tour-scrim:rgba(0,0,0,.72)}
+body.theme-light{--tour-scrim:rgba(24,22,18,.62)}
+
+.tour-root{position:fixed;inset:0;z-index:10050;pointer-events:none}
+.tour-block{position:absolute;inset:0;pointer-events:auto;cursor:pointer}
+.tour-block.dim{background:var(--tour-scrim)}
+/* Shadow order matters: the list paints front-to-back, so the ring and glow
+   have to come BEFORE the 9999px scrim or the scrim covers them up. */
+.tour-spot{position:fixed;pointer-events:none;box-shadow:0 0 0 2px var(--accent),0 0 20px 3px color-mix(in srgb,var(--accent) 45%,transparent),0 0 0 9999px var(--tour-scrim)}
+
+.tour-card{position:fixed;top:0;left:0;width:min(348px,calc(100vw - 32px));pointer-events:auto;background:var(--surface);border:0.5px solid var(--border2);border-radius:var(--radius-md);box-shadow:var(--edge-highlight),var(--shadow-lg);overflow:hidden;opacity:0;transition:opacity .18s var(--ease);outline:none}
+.tour-card.shown{opacity:1}
+.tour-card:focus-visible{outline:none}
+
+.tour-arrow{position:absolute;width:0;height:0;border:8px solid transparent}
+.tour-arrow.point-bottom{top:-16px;border-bottom-color:var(--surface)}
+.tour-arrow.point-top{bottom:-16px;border-top-color:var(--surface)}
+.tour-arrow.point-right{left:-16px;border-right-color:var(--surface)}
+.tour-arrow.point-left{right:-16px;border-left-color:var(--surface)}
+
+.tour-progress{height:3px;background:var(--surface3)}
+.tour-progress-fill{height:100%;background:var(--accent);border-radius:0 3px 3px 0;transition:width .3s var(--ease)}
+
+.tour-close{position:absolute;top:12px;right:12px;background:none;border:none;padding:5px;border-radius:8px;color:var(--faint);cursor:pointer;display:flex;transition:color .15s,background .15s}
+.tour-close:hover{color:var(--text);background:var(--surface2)}
+
+.tour-body{padding:18px 20px 4px}
+.tour-count{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+.tour-title{font-family:var(--font-head);font-size:17px;font-weight:800;letter-spacing:-.3px;margin:0 24px 7px 0;color:var(--text)}
+.tour-text{font-size:13.5px;line-height:1.55;color:var(--muted);margin:0}
+
+.tour-points{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:7px}
+.tour-points li{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;line-height:1.45;color:var(--muted)}
+.tour-point-icon{flex-shrink:0;width:20px;text-align:center;color:var(--text);font-size:12px;opacity:.85}
+
+.tour-hint{margin-top:12px;display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);border:0.5px solid var(--accent-ring);color:var(--text);font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:var(--radius-xs)}
+
+.tour-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:16px 20px 18px}
+.tour-nav{display:flex;gap:8px}
+.tour-btn-skip{background:none;border:none;padding:8px 2px;color:var(--faint);font-family:var(--font-body);font-size:12.5px;font-weight:600;cursor:pointer;transition:color .15s}
+.tour-btn-skip:hover{color:var(--muted)}
+.tour-btn-back{background:none;border:0.5px solid var(--border2);border-radius:var(--radius-xs);padding:8px 14px;color:var(--muted);font-family:var(--font-body);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.tour-btn-back:hover{color:var(--text);background:var(--surface2)}
+.tour-btn-next{background:var(--accent);color:#0D0D0F;border:none;border-radius:var(--radius-xs);padding:8px 18px;font-family:var(--font-head);font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s,transform .1s}
+.tour-btn-next:hover{opacity:.88}
+.tour-btn-next:active{transform:scale(.97)}
+body.theme-light .tour-btn-next{color:#FFFFFF}
+
+@media(max-width:900px){
+  .tour-card{width:calc(100vw - 24px)}
+  .tour-arrow{display:none}
+}
+@media (prefers-reduced-motion: reduce){
+  .tour-card,.tour-progress-fill{transition:none}
+}

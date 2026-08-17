@@ -77,7 +77,7 @@ const btnSecondary = {
   cursor: 'pointer', fontFamily: 'inherit',
 };
 
-export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogout, onOpenAdmin }) {
+export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogout, onOpenAdmin, onReplayTour }) {
   const [profileData, setProfileData] = useState(null);
   const [loading,     setLoading]     = useState(true);
 
@@ -535,6 +535,13 @@ export default function ProfileView({ onBack, currentUser, onUserUpdate, onLogou
               >
                 {soundEnabled ? '🔊 On' : '🔇 Off'}
               </button>
+            </div>
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '18px', marginTop: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: '700' }}>App guide</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>Replay the walkthrough of what everything does and where it lives</div>
+              </div>
+              <button onClick={onReplayTour} style={{ ...btnSecondary, whiteSpace: 'nowrap' }}>🧭 Replay</button>
             </div>
           </div>
         </Section>

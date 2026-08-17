@@ -330,7 +330,7 @@ export default function DashboardView({
             )}
           </div>
         </div>
-        <div className="topbar-right" style={{ position: 'absolute', top: '20px', right: '20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+        <div className="topbar-right" data-tour="top-actions" style={{ position: 'absolute', top: '20px', right: '20px', display: 'flex', gap: '12px', alignItems: 'center' }}>
           <button className="theme-toggle" style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontSize: '20px', padding: '8px', opacity: 0.7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onOpenFeedback} title="Beta Feedback">
             <MessageSquarePlus size={20} strokeWidth={2.5} />
           </button>
@@ -387,7 +387,7 @@ export default function DashboardView({
       </AnimatePresence>
 
       {/* Stats */}
-      <div className="stats-row" id="stats-row" style={{ marginBottom: '40px' }}>
+      <div className="stats-row" id="stats-row" data-tour="dash-stats" style={{ marginBottom: '40px' }}>
         <div className="stat-card">
           <div className="stat-label">SPACES</div>
           <div className="stat-value">{spaces.length}</div>
@@ -408,7 +408,7 @@ export default function DashboardView({
 
       {/* Today's Focus */}
       {topFocusTasks.length > 0 && (
-        <div className="focus-section" style={{ padding: '0 36px', marginBottom: '56px' }}>
+        <div className="focus-section" data-tour="dash-focus" style={{ padding: '0 36px', marginBottom: '56px' }}>
           <div className="focus-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <h2 style={{ fontSize: 'min(24px, 6vw)', fontWeight: '800', letterSpacing: '-0.8px', margin: 0 }}>Today's Focus</h2>
@@ -453,7 +453,7 @@ export default function DashboardView({
       <div className="view active" id="view-dashboard" style={{ paddingTop: 0 }}>
         <h2 style={{ fontSize: '24px', fontWeight: '800', letterSpacing: '-0.8px', marginBottom: '24px' }}>Spaces</h2>
         {spaces.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '56px 0', color: 'var(--faint)' }}>
+          <div data-tour="dash-spaces" style={{ textAlign: 'center', padding: '56px 0', color: 'var(--faint)' }}>
             <div style={{ fontSize: '40px', marginBottom: '16px', opacity: 0.4 }}>🗂</div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--muted)', marginBottom: '8px' }}>No spaces yet</div>
             <div style={{ fontSize: '13px', lineHeight: '1.6' }}>
@@ -462,7 +462,7 @@ export default function DashboardView({
             </div>
           </div>
         ) : (
-          <div ref={spacesGridRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginBottom: '56px' }}>
+          <div ref={spacesGridRef} data-tour="dash-spaces" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginBottom: '56px' }}>
             {spaces.map(s => (
               <SpaceCard key={s.id} space={s} projects={activeProjects} onOpenSpace={onOpenSpace} />
             ))}

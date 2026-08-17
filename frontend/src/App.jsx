@@ -26,6 +26,8 @@ import GlobalCallNotification from './components/GlobalCallNotification';
 import CallBanner from './components/CallBanner';
 import DialogModal from './components/DialogModal';
 import FadeOut from './components/FadeOut';
+import AppTour from './components/AppTour';
+import { TOURS, hasSeenTour, markTourSeen, resetTours } from './tours';
 
 // Lazy-loaded: heavy or rarely-used chunks loaded on demand
 const AdminView        = React.lazy(() => import('./views/AdminView'));
@@ -200,6 +202,8 @@ export default function App() {
   // right-click context menus on shared items (Sidebar + Dashboard)
   const [leaveConfirm, setLeaveConfirm] = useState({ open: false, kind: '', item: null });
   const [showProfile, setShowProfile] = useState(false);
+  // Guided walkthrough: 'main' | 'project' | null. See tours.js for the steps.
+  const [activeTour, setActiveTour] = useState(null);
   const [inviteToken, setInviteToken] = useState(null);
   const [googleClientId, setGoogleClientId] = useState(configuredGoogleClientId);
   const [staticPage, setStaticPage] = useState(() => {
@@ -676,6 +680,68 @@ export default function App() {
     }
   };
 
+  // ── Guided app tour ───────────────────────────────────────────────
+  // Two walkthroughs, each fired on the screen it actually describes: the
+  // dashboard one right after the first data load paints, the project one the
+  // first time a project is opened. Both are once-per-user (localStorage) and
+  // replayable from Profile → Preferences.
+  const inProjectView = !!(currentProjectId || currentSharedProjectId);
+  const inDashboard = !currentProjectId && !currentSharedProjectId && !currentSpaceId && !currentSharedSpaceId;
+
+  useEffect(() => {
+    if (!loggedIn || !dataLoaded || !currentUser?.id) return;
+    if (showProfile || staticPage || inviteToken || !inDashboard) return;
+    if (activeTour || hasSeenTour('main', currentUser.id)) return;
+    // Let the dashboard's entry animation settle before anything is measured.
+    const t = setTimeout(() => { setActiveTour('main'); track('tour_started', { tour: 'main' }); }, 800);
+    return () => clearTimeout(t);
+  }, [loggedIn, dataLoaded, currentUser, showProfile, staticPage, inviteToken, inDashboard, activeTour]);
+
+  useEffect(() => {
+    if (!loggedIn || !currentUser?.id || !inProjectView || activeTour) return;
+    // Dashboard tour first — two overlays at once would be a mess.
+    if (!hasSeenTour('main', currentUser.id) || hasSeenTour('project', currentUser.id)) return;
+    const t = setTimeout(() => { setActiveTour('project'); track('tour_started', { tour: 'project' }); }, 700);
+    return () => clearTimeout(t);
+  }, [loggedIn, currentUser, inProjectView, activeTour]);
+
+  // Sidebar targets sit off-canvas on mobile and are hidden when collapsed on
+  // desktop, so open it for the steps that live there and get it out of the
+  // way for the ones that don't.
+  const handleTourStep = useCallback((step) => {
+    const mobile = window.innerWidth <= 900;
+    if (step?.sidebar) {
+      setSidebarCollapsed(false);
+      if (mobile) setSidebarOpen(true);
+    } else if (mobile) {
+      setSidebarOpen(false);
+    }
+  }, []);
+
+  const handleTourClose = useCallback((reason, stepId, stepIndex) => {
+    const tourId = activeTour;
+    setActiveTour(null);
+    if (window.innerWidth <= 900) setSidebarOpen(false);
+    if (!tourId) return;
+    // Marked seen however it ended — nobody wants the guide twice.
+    markTourSeen(tourId, currentUser?.id);
+    track(reason === 'completed' ? 'tour_completed' : 'tour_skipped', {
+      tour: tourId, step: stepId, step_index: stepIndex,
+    });
+  }, [activeTour, currentUser]);
+
+  const replayTour = useCallback(() => {
+    resetTours(currentUser?.id);
+    setShowProfile(false);
+    setCurrentProjectId(null);
+    setCurrentSharedProjectId(null);
+    setCurrentSpaceId(null);
+    setCurrentSharedSpaceId(null);
+    setActiveTour(null);
+    // Wait for the dashboard to mount before the tour starts measuring it.
+    setTimeout(() => { setActiveTour('main'); track('tour_started', { tour: 'main', source: 'replay' }); }, 400);
+  }, [currentUser]);
+
   // ── Call helpers ──────────────────────────────────────────────────
   const startCall = useCallback(async (callId, callType, entityType = 'project', asHost = true) => {
     try {
@@ -876,6 +942,7 @@ export default function App() {
             onUserUpdate={(updates) => setCurrentUser(prev => ({ ...prev, ...updates }))}
             onLogout={handleLogout}
             onOpenAdmin={() => { window.history.pushState({}, '', '/admin'); setShowProfile(false); }}
+            onReplayTour={replayTour}
           />
         )}
         {!showProfile && activeView === 'dashboard' && (
@@ -1234,8 +1301,8 @@ export default function App() {
         />
       </React.Suspense>
 
-      <CommandPalette 
-        projects={appData.projects} 
+      <CommandPalette
+        projects={appData.projects}
         isOpen={isCommandPaletteOpen}
         setIsOpen={setIsCommandPaletteOpen}
         onSelectProject={(pid, tid) => {
@@ -1244,8 +1311,19 @@ export default function App() {
             setHighlightedTaskId(tid);
             setTimeout(() => setHighlightedTaskId(null), 2500);
           }
-        }} 
+        }}
       />
+
+      {/* Guided walkthrough — keyed so switching tours starts from a clean slate */}
+      {activeTour && (
+        <AppTour
+          key={activeTour}
+          tourId={activeTour}
+          steps={TOURS[activeTour]}
+          onStepEnter={handleTourStep}
+          onClose={handleTourClose}
+        />
+      )}
     </div>
   );
 }
