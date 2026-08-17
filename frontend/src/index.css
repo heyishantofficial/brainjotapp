@@ -82,19 +82,17 @@ button,[role="button"],input,label,select,a{touch-action:manipulation}
 .lv-title{font-family:var(--font-head);font-size:22px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:-0.4px}
 .lv-sub{font-size:13px;color:rgba(255,255,255,0.42);margin-bottom:20px;line-height:1.5}
 /* Google */
-#google-signin-btn{width:100%!important;margin-bottom:6px}
-.lv-google-notice{font-size:11px;color:rgba(255,255,255,0.3);text-align:center;margin-bottom:4px;line-height:1.5}
+#google-signin-btn{width:100%!important}
 /* Divider */
 .lv-divider{display:flex;align-items:center;gap:10px;margin:14px 0;color:rgba(255,255,255,0.2);font-size:12px;font-weight:500}
 .lv-divider::before,.lv-divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.1)}
 /* Fields */
 .lv-field{margin-bottom:12px}
-.lv-label{display:block;font-size:11px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
 .lv-field-pass{position:relative}
 .lv-field-at{position:relative}
 .lv-input{width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:11px 14px;color:#fff;font-family:var(--font-body);font-size:14px;outline:none;transition:border-color .18s,box-shadow .18s;box-sizing:border-box}
 .lv-input:focus{border-color:rgba(255,255,255,0.35);box-shadow:0 0 0 3px rgba(255,255,255,0.06)}
-.lv-input::placeholder{color:rgba(255,255,255,0.2)}
+.lv-input::placeholder{color:rgba(255,255,255,0.38)}
 .lv-input:disabled{opacity:.4}
 .lv-otp{letter-spacing:8px;text-align:center;font-size:18px;font-weight:700}
 .lv-eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.3);display:flex;align-items:center;padding:4px}
@@ -112,14 +110,14 @@ button,[role="button"],input,label,select,a{touch-action:manipulation}
 .lv-btn-primary:hover:not(:disabled){opacity:.88}
 .lv-btn-primary:active:not(:disabled){transform:scale(.98)}
 .lv-btn-primary:disabled{opacity:.3;cursor:not-allowed}
-/* Link buttons */
-.lv-btn-link{display:block;width:100%;background:none;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:11px;font-size:13px;font-weight:500;color:rgba(255,255,255,0.55);cursor:pointer;text-align:center;margin-bottom:8px;transition:background .15s,border-color .15s}
-.lv-btn-link:hover:not(:disabled){background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.22)}
-.lv-btn-link:disabled{opacity:.4;cursor:not-allowed}
+/* Text links */
 .lv-link{background:none;border:none;color:#D4FF32;cursor:pointer;font-size:inherit;padding:0;font-weight:600;text-decoration:underline;text-underline-offset:2px}
 .lv-link:hover{opacity:.7}
-.lv-forgot-msg{font-size:12px;color:rgba(255,255,255,0.28);text-align:center;line-height:1.4;padding:8px 0}
-.lv-switch{font-size:13px;color:rgba(255,255,255,0.38);text-align:center;margin-top:4px}
+.lv-link:disabled{opacity:.4;cursor:not-allowed}
+.lv-link-quiet{color:rgba(255,255,255,0.45);font-weight:500}
+.lv-row-end{display:flex;justify-content:flex-end;margin:-4px 0 14px;font-size:12px}
+.lv-switch{font-size:13px;color:rgba(255,255,255,0.38);text-align:center;margin-top:14px}
+.lv-fineprint{font-size:11px;color:rgba(255,255,255,0.24);text-align:center;line-height:1.6;margin-top:10px}
 @media(max-width:640px){
   #login-screen{padding:16px;align-items:flex-end}
   .lv-card{padding:28px 20px;border-radius:20px 20px 12px 12px;max-width:100%}
