@@ -17,6 +17,7 @@ import { X } from 'lucide-react';
 const GAP = 16;   // space between the spotlight edge and the card
 const EDGE = 16;  // minimum distance from the viewport edge
 const MOBILE = 900;
+const MAX_TRIES = 40; // 50ms polls, so ~2s to find and settle a target
 
 const reducedMotion = () =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -82,10 +83,14 @@ function computeCard(spot, size, placement) {
   }
 
   if (!pos) {
-    // Nothing fits cleanly — take the roomier vertical side and clamp.
+    // The target is taller than the room beside it, so some overlap can't be
+    // avoided. Pin the card to a screen edge instead of letting the clamp
+    // drop it across the middle: that way it covers the far end of the
+    // target and leaves the highlighted near edge readable.
+    const cx = spot.left + spot.width / 2;
     const roomBelow = vh - (spot.top + spot.height);
     side = roomBelow >= spot.top ? 'bottom' : 'top';
-    pos = place(side, spot, w, h);
+    pos = { top: side === 'bottom' ? vh - h - EDGE : EDGE, left: cx - w / 2 };
   }
 
   const top = clamp(pos.top, EDGE, Math.max(EDGE, vh - h - EDGE));
@@ -113,7 +118,12 @@ export default function AppTour({ steps, tourId, onStepEnter, onClose }) {
   // Steps pointing at something that isn't on screen right now are dropped
   // up front, so "Step 3 of 8" is honest and no card ever points at nothing.
   const [liveSteps] = useState(() =>
-    steps.filter(s => !s.target || isLaidOut(document.querySelector(s.target)))
+    steps.filter(s => {
+      if (!s.target) return true;
+      // A `before` step's target is still hidden at this point, so decide by
+      // whether the thing that reveals it is there.
+      return isLaidOut(document.querySelector(s.before || s.target));
+    })
   );
 
   const [index, setIndex] = useState(0);
@@ -170,20 +180,45 @@ export default function AppTour({ steps, tourId, onStepEnter, onClose }) {
     let cancelled = false;
     let timer;
     let tries = 0;
+    let lastH = -1;
 
     const attempt = () => {
       if (cancelled) return;
+      // Some steps explain something that lives behind a disclosure (an
+      // expanded task panel). `before` names a thing to click open first.
+      // Guarded on the target being absent, so retries and a Back into this
+      // step can't toggle it shut again.
+      if (step.before && !document.querySelector(step.target)) {
+        document.querySelector(step.before)?.click();
+      }
       const el = document.querySelector(step.target);
       if (isOnScreen(el)) {
+        // A target that animates open keeps growing for a beat. Scrolling and
+        // placing the card off its half-expanded height puts both in the wrong
+        // spot, so wait for the height to hold steady for one tick first.
+        const h = el.getBoundingClientRect().height;
+        if (Math.abs(h - lastH) > 1 && tries < MAX_TRIES) {
+          lastH = h;
+          tries++;
+          timer = setTimeout(attempt, 50);
+          return;
+        }
         targetRef.current = el;
         const r = el.getBoundingClientRect();
-        if (r.top < EDGE || r.bottom > window.innerHeight - EDGE) {
-          el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+        const pad = step.padding ?? 8;
+        const smooth = reducedMotion() ? 'auto' : 'smooth';
+        if (r.height > window.innerHeight * 0.45) {
+          // Centring a target taller than about half the screen leaves no
+          // room for the card on either side. Park its top near the top of
+          // the viewport instead so the card has somewhere to sit below.
+          window.scrollTo({ top: window.scrollY + r.top - (EDGE + pad), behavior: smooth });
+        } else if (r.top < EDGE || r.bottom > window.innerHeight - EDGE) {
+          el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: smooth });
         }
         setReady(true);
         return;
       }
-      if (++tries > 24) { // ~1.2s — the sidebar transition is 0.25s
+      if (++tries > MAX_TRIES) {
         targetRef.current = null;
         go(dirRef.current);
         return;

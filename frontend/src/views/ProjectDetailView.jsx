@@ -824,7 +824,7 @@ export default function ProjectDetailView({ project, onBack, onUpdate, onToast, 
             )}
 
             {viewMode === 'list' && (
-            <div id="tasks-list">
+            <div id="tasks-list" data-tour="proj-tasks">
               {processedTasks.filter(t => !effDone(t)).length === 0 && (processedTasks.length === 0 || hideCompleted) ? (
                 <div style={{
                   display: 'flex',
